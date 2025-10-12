@@ -1,0 +1,16 @@
+import { Screen, PortfolioCategory } from './types';
+
+export const DATA_VERSION = 2;
+
+export const NAV_ITEMS = [
+  { screen: Screen.StockStatus, label: '종목별 현황' },
+  { screen: Screen.AccountStatus, label: '계좌 현황' },
+  { screen: Screen.Home, label: '홈' },
+  { screen: Screen.TradeHistory, label: '매매기록' },
+  { screen: Screen.AccountTransactions, label: '계좌입출금' },
+  { screen: Screen.ProfitManagement, label: '수익 관리' },
+  { screen: Screen.MonthlyHistory, label: '월말 결산' },
+  { screen: Screen.Index, label: '설정' },
+];
+
+export const PORTFOLIO_CATEGORIES = Object.values(PortfolioCategory);
