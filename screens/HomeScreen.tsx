@@ -25,6 +25,65 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#AF19FF'];
 const formatCurrency = (value: number) => new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(value);
 const formatNumberForChart = (value: number) => new Intl.NumberFormat('ko-KR').format(Math.round(value));
 
+/**
+ * Calculates the Money-Weighted Rate of Return (MWRR) using the XIRR algorithm (bisection method).
+ * @param cashflows An array of cash flow objects, with negative amounts for deposits and positive for withdrawals/final value.
+ * @returns The annualized rate of return as a percentage.
+ */
+const calculateXIRR = (cashflows: { amount: number; date: Date }[]): number => {
+    if (cashflows.length < 2) return 0;
+    
+    const hasPositive = cashflows.some(cf => cf.amount > 0);
+    const hasNegative = cashflows.some(cf => cf.amount < 0);
+    if (!hasPositive || !hasNegative) return 0;
+
+    cashflows.sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    const calculateNPV = (rate: number): number => {
+        let npv = 0;
+        const firstDate = cashflows[0].date;
+        for (const cf of cashflows) {
+            const daysDiff = (cf.date.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24);
+            const yearsDiff = daysDiff / 365.25;
+            npv += cf.amount / Math.pow(1 + rate, yearsDiff);
+        }
+        return npv;
+    };
+
+    const MAX_ITERATIONS = 100;
+    const PRECISION = 1e-7;
+    let low = -0.99; // -99%
+    let high = 10.0; // 1000%
+    let mid = 0;
+
+    const npvLow = calculateNPV(low);
+    const npvHigh = calculateNPV(high);
+
+    if (npvLow * npvHigh > 0) {
+        // If NPV at both bounds has the same sign, a solution might not exist in this range.
+        // This is a rare case for typical investment scenarios. Return 0 as a safe fallback.
+        return 0;
+    }
+
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+        mid = (low + high) / 2;
+        const npvMid = calculateNPV(mid);
+        
+        if (Math.abs(npvMid) < PRECISION) {
+            return mid * 100; // Return as percentage
+        }
+
+        if (npvLow * npvMid < 0) {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+
+    return mid * 100; // Return the best guess if precision is not met
+};
+
+
 const MetricDisplay: React.FC<{ label: string; value: string; tooltip: string }> = ({ label, value, tooltip }) => (
   <div className="text-center" title={tooltip}>
     <p className="text-sm font-medium text-light-secondary dark:text-dark-secondary mb-1">{label}</p>
@@ -166,10 +225,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
         }
     }
     
-    // 총 자산은 이제 현재 주식 가치와, 초기 손익이 포함된 수정된 예수금을 합산합니다.
     const totalAssets = currentStockValue + totalCashBalance;
 
-    // Investment Period
     const tradeDates = (trades || []).map(t => new Date(t.date).getTime());
     const txDates = (transactions || []).map(t => new Date(t.date).getTime());
     const allTimestamps = [...tradeDates, ...txDates];
@@ -181,21 +238,32 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
       investmentPeriodInYears = Math.max(periodInMillis, 1000 * 60 * 60 * 24) / (1000 * 60 * 60 * 24 * 365.25);
     }
     
-    // Return Metrics
-    // 누적 수익은 현재 총 자산에서 총 순입금액(원금)을 차감하여 계산합니다.
     const profitLoss = totalAssets - netExternalDeposits;
     
     // 1. CCR
     const ccr = netExternalDeposits > 0 ? (profitLoss / netExternalDeposits) * 100 : 0;
     
-    // 2. CAGR
-    const cagrRatio = totalAssets / netExternalDeposits;
-    let cagr = 0;
-    if (investmentPeriodInYears > 0 && netExternalDeposits > 0 && cagrRatio >= 0) {
-        cagr = (Math.pow(cagrRatio, 1 / investmentPeriodInYears) - 1) * 100;
-    } else if (investmentPeriodInYears > 0 && netExternalDeposits > 0 && cagrRatio < 0) {
-        cagr = -100;
+    // 2. MWRR (Money-Weighted Rate of Return) using XIRR
+    const cashFlows: { amount: number; date: Date }[] = [];
+    (transactions || []).forEach(t => {
+        if (t.transactionType === TransactionType.Dividend) return;
+        if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return;
+        
+        const amount = Number(t.amount) || 0;
+        const date = new Date(t.date);
+
+        if (t.transactionType === TransactionType.Deposit) {
+            cashFlows.push({ amount: -amount, date }); // Cash outflow from investor
+        } else if (t.transactionType === TransactionType.Withdrawal) {
+            cashFlows.push({ amount: amount, date }); // Cash inflow to investor
+        }
+    });
+
+    if (totalAssets > 0 || cashFlows.length > 0) {
+        cashFlows.push({ amount: totalAssets, date: new Date() });
     }
+
+    const mwrr = calculateXIRR(cashFlows);
 
     // 3. YTD
     const currentYear = new Date().getFullYear();
@@ -208,7 +276,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     if (lastYearValues.length > 0) {
         startOfYearAssets = Number(lastYearValues[0].totalValue) || 0;
     } else {
-        // Fallback: If no monthly data exists for previous years, use net deposits up to the start of this year.
         startOfYearAssets = (transactions || [])
             .filter(t => {
                 if (new Date(t.date) >= startOfCurrentYear) return false;
@@ -227,9 +294,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     const netInflowThisYear = (transactions || [])
         .filter(t => {
             if (new Date(t.date).getFullYear() !== currentYear) return false;
-            // 배당금 제외
             if (t.transactionType === TransactionType.Dividend) return false;
-            // 증권계좌 간 내부 이체 제외
             if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false;
             return true;
         })
@@ -247,7 +312,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     // 4. Simple Annualized Return
     const simpleAnnualized = investmentPeriodInYears > 0 ? ccr / investmentPeriodInYears : 0;
 
-    // Portfolio Chart Data: Calculate total value for only portfolio stocks
     const portfolioStockIds = new Set((stocks || []).filter(s => s.isPortfolio).map(s => s.id));
     
     let totalPortfolioStockValue = 0;
@@ -259,7 +323,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
 
     const targetPercentagesByCategory: { [key in PortfolioCategory]?: number } = {};
     const individualStocksWithDetails = (stocks || [])
-      .filter(stock => stock.isPortfolio) // Only include portfolio stocks
+      .filter(stock => stock.isPortfolio)
       .map(stock => {
         const currentValue = valueByStock[stock.id] || 0;
         const currentWeight = totalPortfolioStockValue > 0 ? (currentValue / totalPortfolioStockValue) * 100 : 0;
@@ -302,11 +366,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
       netExternalDeposits,
       profitLoss,
       ccr,
-      cagr,
+      mwrr,
       ytd,
       simpleAnnualized,
       chartData: portfolioChartData,
-      totalPortfolioValue: totalPortfolioStockValue, // Use the portfolio-only total value
+      totalPortfolioValue: totalPortfolioStockValue,
     };
   }, [trades, transactions, stocks, stockPrices, stockMap, initialPortfolio, totalCashBalance, netExternalDeposits, monthlyValues, securityAccountIds, accounts, historicalGains]);
 
@@ -550,9 +614,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
             tooltip="전체 투자 기간 동안의 총 수익률입니다. (총 수익 / 누적 순입금액)" 
           />
           <MetricDisplay 
-            label="연환산 복리 수익률 (CAGR)" 
-            value={`${financialSummary.cagr.toFixed(2)}%`} 
-            tooltip="연환산 복리 수익률입니다. 투자 기간 동안의 기하 평균 수익률을 나타냅니다."
+            label="금액가중 수익률 (MWRR)" 
+            value={`${financialSummary.mwrr.toFixed(2)}%`} 
+            tooltip="입출금 시점과 규모를 모두 반영한 연환산 수익률입니다. 투자자의 실제 성과를 나타냅니다."
           />
           <MetricDisplay 
             label="올해 (YTD)" 

@@ -10,13 +10,16 @@ interface State {
 }
 
 class ErrorBoundary extends React.Component<Props, State> {
-  // FIX: Replaced the constructor with a class field initializer for the `state`.
-  // This is the modern and recommended approach in TypeScript with React and resolves
-  // type errors where `this.state` and `this.props` were not being recognized on the class instance.
-  state: State = {
-    hasError: false,
-    error: null,
-  };
+  // FIX: Reverted to using a constructor to initialize state.
+  // The class field initializer was causing a type error where `this.props` was not
+  // recognized in the render method, possibly due to build configuration.
+  constructor(props: Props) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null,
+    };
+  }
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
