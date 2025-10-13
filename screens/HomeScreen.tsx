@@ -37,6 +37,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTrendYear, setSelectedTrendYear] = useState<number | string>('전체');
   const [isRebalancingAlertExpanded, setIsRebalancingAlertExpanded] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState<PortfolioCategory | null>(null);
 
   const stockMap = useMemo(() => new Map((stocks || []).map(s => [s.id, s])), [stocks]);
   const securityAccountIds = useMemo(() => new Set((accounts || []).map(a => a.id)), [accounts]);
@@ -153,20 +154,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     }
 
     let currentStockValue = 0;
-    const valueByCategory: { [key in PortfolioCategory]: number } = {
-      [PortfolioCategory.Cash]: 0, [PortfolioCategory.Alternatives]: 0, [PortfolioCategory.Bonds]: 0, [PortfolioCategory.Dividend]: 0, [PortfolioCategory.Stock]: 0,
-    };
+    const valueByStock: { [stockId: string]: number } = {};
     for (const stockId in holdings) {
-      if (holdings[stockId].quantity > 0) {
-        const stock = stockMap.get(stockId);
-        const ticker = stock?.ticker;
-        const currentPrice = ticker ? stockPrices[ticker] ?? 0 : 0;
-        const value = holdings[stockId].quantity * currentPrice;
-        currentStockValue += value;
-        if (stock && stock.category) {
-          valueByCategory[stock.category] = (valueByCategory[stock.category] || 0) + value;
+        if (holdings[stockId].quantity > 0) {
+            const stock = stockMap.get(stockId);
+            const ticker = stock?.ticker;
+            const currentPrice = ticker ? stockPrices[ticker] ?? 0 : 0;
+            const value = holdings[stockId].quantity * currentPrice;
+            currentStockValue += value;
+            valueByStock[stockId] = value;
         }
-      }
     }
     
     // 총 자산은 이제 현재 주식 가치와, 초기 손익이 포함된 수정된 예수금을 합산합니다.
@@ -250,27 +247,53 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     // 4. Simple Annualized Return
     const simpleAnnualized = investmentPeriodInYears > 0 ? ccr / investmentPeriodInYears : 0;
 
-    // Portfolio Chart Data
-    const targetPercentagesByCategory: { [key in PortfolioCategory]?: number } = {};
-    (stocks || []).forEach(stock => {
-      if (stock.isPortfolio) {
-        const percentage = (initialPortfolio || {})[stock.id] || 0;
-        if (percentage > 0) {
-          targetPercentagesByCategory[stock.category] = (targetPercentagesByCategory[stock.category] || 0) + percentage;
-        }
-      }
-    });
+    // Portfolio Chart Data: Calculate total value for only portfolio stocks
+    const portfolioStockIds = new Set((stocks || []).filter(s => s.isPortfolio).map(s => s.id));
     
+    let totalPortfolioStockValue = 0;
+    for (const stockId in valueByStock) {
+        if (portfolioStockIds.has(stockId)) {
+            totalPortfolioStockValue += valueByStock[stockId];
+        }
+    }
+
+    const targetPercentagesByCategory: { [key in PortfolioCategory]?: number } = {};
+    const individualStocksWithDetails = (stocks || [])
+      .filter(stock => stock.isPortfolio) // Only include portfolio stocks
+      .map(stock => {
+        const currentValue = valueByStock[stock.id] || 0;
+        const currentWeight = totalPortfolioStockValue > 0 ? (currentValue / totalPortfolioStockValue) * 100 : 0;
+        const targetWeight = (initialPortfolio || {})[stock.id] || 0;
+        const requiredPurchase = (totalPortfolioStockValue * (targetWeight / 100)) - currentValue;
+        
+        if (targetWeight > 0) {
+            targetPercentagesByCategory[stock.category] = (targetPercentagesByCategory[stock.category] || 0) + targetWeight;
+        }
+        
+        return {
+            ...stock,
+            currentValue,
+            currentWeight,
+            targetWeight,
+            deviation: currentWeight - targetWeight,
+            requiredPurchase,
+        };
+      }).filter(s => s.currentValue > 0 || s.targetWeight > 0);
+
+
     const portfolioChartData = PORTFOLIO_CATEGORIES.map(category => {
-      const currentValue = valueByCategory[category] || 0;
-      const currentPercentage = currentStockValue > 0 ? (currentValue / currentStockValue) * 100 : 0;
+      const stocksInCategory = individualStocksWithDetails.filter(s => s.category === category);
+      const currentValue = stocksInCategory.reduce((sum, s) => sum + s.currentValue, 0);
+      const currentPercentage = totalPortfolioStockValue > 0 ? (currentValue / totalPortfolioStockValue) * 100 : 0;
       const targetPercentage = targetPercentagesByCategory[category] || 0;
+      
       return {
         name: category,
         value: currentValue,
         percentage: currentPercentage,
         targetPercentage: targetPercentage,
         difference: currentPercentage - targetPercentage,
+        stocks: stocksInCategory.sort((a,b) => b.currentValue - a.currentValue),
       };
     }).filter(d => d.value > 0 || d.targetPercentage > 0);
 
@@ -283,7 +306,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
       ytd,
       simpleAnnualized,
       chartData: portfolioChartData,
-      totalPortfolioValue: currentStockValue,
+      totalPortfolioValue: totalPortfolioStockValue, // Use the portfolio-only total value
     };
   }, [trades, transactions, stocks, stockPrices, stockMap, initialPortfolio, totalCashBalance, netExternalDeposits, monthlyValues, securityAccountIds, accounts, historicalGains]);
 
@@ -415,6 +438,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
         {`${(percent * 100).toFixed(0)}%`}
       </text>
     );
+  };
+  
+  const toggleCategory = (category: PortfolioCategory) => {
+    setExpandedCategory(prev => prev === category ? null : category);
   };
 
   return (
@@ -575,37 +602,69 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
                 </p>
               </div>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-1">
               {financialSummary.chartData.map((item) => {
                 const pieChartItems = financialSummary.chartData.filter(d => d.value > 0);
                 const pieIndex = pieChartItems.findIndex(d => d.name === item.name);
-                const color = pieIndex !== -1 ? COLORS[pieIndex % COLORS.length] : '#9ca3af'; // gray-400
+                const color = pieIndex !== -1 ? COLORS[pieIndex % COLORS.length] : '#9ca3af';
 
                 return (
                   <div key={item.name}>
-                    <div className="flex justify-between items-center mb-1 text-sm">
-                      <div className="flex items-center min-w-0">
-                        <span className="w-3 h-3 rounded-full mr-2 flex-shrink-0" style={{ backgroundColor: color }}></span>
-                        <span className="font-semibold text-light-text dark:text-dark-text truncate">{item.name}</span>
+                    <div 
+                      className={`p-2 rounded-lg cursor-pointer transition-colors ${expandedCategory === item.name ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/50'}`}
+                      onClick={() => toggleCategory(item.name)}
+                      aria-expanded={expandedCategory === item.name}
+                      >
+                        <div className="flex justify-between items-center text-sm">
+                          <div className="flex items-center min-w-0">
+                            <span className="w-3 h-3 rounded-full mr-2 flex-shrink-0" style={{ backgroundColor: color }}></span>
+                            <span className="font-semibold text-light-text dark:text-dark-text truncate">{item.name}</span>
+                          </div>
+                          <div className="flex items-center">
+                            <span className="font-bold text-light-text dark:text-dark-text ml-2 flex-shrink-0">{item.percentage.toFixed(1)}%</span>
+                            {expandedCategory === item.name ? <ChevronUpIcon className="w-4 h-4 ml-1"/> : <ChevronDownIcon className="w-4 h-4 ml-1"/>}
+                          </div>
+                        </div>
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 relative mt-1">
+                          <div className="bg-light-primary dark:bg-dark-primary h-2 rounded-full" style={{ width: `${item.percentage}%` }}></div>
+                          {item.targetPercentage > 0 &&
+                              <div 
+                                  title={`목표: ${item.targetPercentage.toFixed(1)}%`}
+                                  className="absolute top-[-2px] h-3 w-1 bg-red-500 rounded-sm" 
+                                  style={{ left: `calc(${item.targetPercentage}% - 2px)` }}
+                              ></div>
+                          }
+                        </div>
+                         <div className="flex justify-between items-center mt-1 text-xs text-light-secondary dark:text-dark-secondary">
+                          <span>{formatCurrency(item.value)}</span>
+                          <span className={`font-medium ${item.difference >= 0 ? 'text-profit' : 'text-loss'}`}>
+                            목표 대비: {item.difference >= 0 ? '+' : ''}{item.difference.toFixed(1)}%
+                          </span>
+                        </div>
+                    </div>
+                    {expandedCategory === item.name && (
+                      <div className="mt-2 pl-4 pr-1 pb-1 border-l-2 border-blue-200 dark:border-blue-800 space-y-3">
+                        {item.stocks.map(stock => (
+                          <div key={stock.id} className="text-xs">
+                            <p className="font-semibold truncate">{stock.name}</p>
+                            <div className="flex justify-between items-center text-light-secondary dark:text-dark-secondary">
+                              <span>현재 {stock.currentWeight.toFixed(1)}% (목표 {stock.targetWeight.toFixed(1)}%)</span>
+                              <span className={`font-bold ${stock.deviation >= 0 ? 'text-profit' : 'text-loss'}`}>
+                                {stock.deviation >= 0 ? '+' : ''}{stock.deviation.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center mt-1">
+                              <span className="font-medium text-light-text dark:text-dark-text">
+                                {stock.requiredPurchase > 0 ? '추가 매수 필요' : '비중 초과'}
+                              </span>
+                              <span className={`font-bold text-sm ${stock.requiredPurchase > 0 ? 'text-loss' : 'text-profit'}`}>
+                                {formatCurrency(Math.abs(stock.requiredPurchase))}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <span className="font-bold text-light-text dark:text-dark-text ml-2 flex-shrink-0">{item.percentage.toFixed(1)}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 relative">
-                      <div className="bg-light-primary dark:bg-dark-primary h-2 rounded-full" style={{ width: `${item.percentage}%` }}></div>
-                      {item.targetPercentage > 0 &&
-                          <div 
-                              title={`목표: ${item.targetPercentage.toFixed(1)}%`}
-                              className="absolute top-[-2px] h-3 w-1 bg-red-500 rounded-sm" 
-                              style={{ left: `calc(${item.targetPercentage}% - 2px)` }}
-                          ></div>
-                      }
-                    </div>
-                    <div className="flex justify-between items-center mt-1 text-xs text-light-secondary dark:text-dark-secondary">
-                      <span>{formatCurrency(item.value)}</span>
-                       <span className={`font-medium ${item.difference >= 0 ? 'text-profit' : 'text-loss'}`}>
-                        목표 대비: {item.difference >= 0 ? '+' : ''}{item.difference.toFixed(1)}%
-                      </span>
-                    </div>
+                    )}
                   </div>
                 );
               })}
