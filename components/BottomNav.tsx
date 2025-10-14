@@ -8,6 +8,7 @@ import { NAV_ITEMS } from '../constants';
 interface BottomNavProps {
   currentScreen: Screen;
   setCurrentScreen: (screen: Screen) => void;
+  appVersion: string;
 }
 
 const iconMap: Record<Screen, React.ComponentType<{ className: string }>> = {
@@ -72,7 +73,7 @@ const NavItem: React.FC<{
 };
 
 
-const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, setCurrentScreen }) => {
+const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, setCurrentScreen, appVersion }) => {
   const navOrder = [
     Screen.StockStatus,
     Screen.AccountStatus,
@@ -102,11 +103,14 @@ const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, setCurrentScreen }
         <div className="relative w-full flex justify-center">
             <button
                 onClick={() => setCurrentScreen(Screen.Home)}
-                className={`absolute bottom-3 w-14 h-14 flex items-center justify-center rounded-full shadow-lg transition-transform duration-200 ease-in-out ${currentScreen === Screen.Home ? 'bg-light-primary dark:bg-dark-primary scale-110' : 'bg-light-secondary dark:bg-dark-secondary'}`}
+                className={`absolute bottom-[18px] w-14 h-14 flex items-center justify-center rounded-full shadow-lg transition-transform duration-200 ease-in-out ${currentScreen === Screen.Home ? 'bg-light-primary dark:bg-dark-primary scale-110' : 'bg-light-secondary dark:bg-dark-secondary'}`}
                 aria-label="Home"
             >
                 <HomeIcon className="w-7 h-7 text-white"/>
             </button>
+            {appVersion && (
+                <span className="absolute bottom-1 text-[9px] text-light-secondary dark:text-dark-secondary font-mono select-none pointer-events-none">{appVersion}</span>
+            )}
         </div>
 
         {rightItems.map((item) => (

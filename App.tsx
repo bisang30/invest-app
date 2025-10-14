@@ -487,7 +487,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           {renderScreen()}
         </main>
       </div>
-      <BottomNav currentScreen={currentScreen} setCurrentScreen={navigateToScreen} />
+      <BottomNav currentScreen={currentScreen} setCurrentScreen={navigateToScreen} appVersion={appVersion} />
 
       <Modal isOpen={isExitModalOpen} onClose={() => setIsExitModalOpen(false)} title="앱 종료 확인">
         <p>앱을 종료하기 전에 현재 데이터를 엑셀 파일로 백업하시겠습니까?</p>
