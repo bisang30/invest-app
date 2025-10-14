@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import Card from '../components/ui/Card';
 import { Trade, Stock, TradeType, InitialPortfolio, PortfolioCategory } from '../types';
@@ -173,7 +174,7 @@ const StockStatusScreen: React.FC<StockStatusScreenProps> = ({ trades, stocks, s
                                       <div className="flex items-baseline flex-wrap">
                                           <h3 className="text-lg font-bold text-light-text dark:text-dark-text mr-2">{holding.name}</h3>
                                           {holding.isEtf && (
-                                            <span className="text-xs font-semibold text-gray-800 dark:text-gray-200 bg-gray-300 dark:bg-gray-600 px-2 py-0.5 rounded-full mr-2">
+                                            <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 bg-gray-200 dark:bg-slate-700 px-1.5 py-px rounded-full mr-2">
                                                 ETF
                                             </span>
                                           )}

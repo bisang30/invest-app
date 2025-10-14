@@ -3,7 +3,7 @@ import { Screen, PortfolioCategory } from './types';
 export const DATA_VERSION = 2;
 
 export const NAV_ITEMS = [
-  { screen: Screen.StockStatus, label: '종목별 현황' },
+  { screen: Screen.StockStatus, label: '종목 현황' },
   { screen: Screen.AccountStatus, label: '계좌 현황' },
   { screen: Screen.Home, label: '홈' },
   { screen: Screen.TradeHistory, label: '매매기록' },

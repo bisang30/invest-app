@@ -11,7 +11,7 @@ interface HeaderProps {
 
 const screenTitles: Record<Screen, string> = {
   [Screen.Home]: '투자 현황',
-  [Screen.StockStatus]: '종목별 현황',
+  [Screen.StockStatus]: '종목 현황',
   [Screen.AccountStatus]: '계좌 현황',
   [Screen.TradeHistory]: '매매기록',
   [Screen.AccountTransactions]: '계좌 입출금',

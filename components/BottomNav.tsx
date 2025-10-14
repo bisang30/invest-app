@@ -36,7 +36,7 @@ const activeColorMap: Record<Screen, string> = {
 
 
 const labelMap: Record<string, string> = {
-  '종목별 현황': '종목현황',
+  '종목 현황': '종목현황',
   '계좌 현황': '계좌현황',
   '홈': '홈',
   '매매기록': '매매기록',
