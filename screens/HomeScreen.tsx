@@ -1,7 +1,8 @@
 
+
 import React, { useMemo, useState, useEffect } from 'react';
 import Card from '../components/ui/Card';
-import { Trade, AccountTransaction, Stock, Account, InitialPortfolio, PortfolioCategory, TradeType, TransactionType, MonthlyAccountValue, Broker, HistoricalGain } from '../types';
+import { Trade, AccountTransaction, Stock, Account, InitialPortfolio, PortfolioCategory, TradeType, TransactionType, MonthlyAccountValue, Broker, HistoricalGain, AlertThresholds, Thresholds } from '../types';
 import { PORTFOLIO_CATEGORIES } from '../constants';
 import Select from '../components/ui/Select';
 import { PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, AreaChart, Area, ComposedChart, Line } from 'recharts';
@@ -18,6 +19,7 @@ interface HomeScreenProps {
   monthlyValues: MonthlyAccountValue[];
   showSummary: boolean;
   historicalGains: HistoricalGain[];
+  alertThresholds: AlertThresholds;
 }
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#AF19FF'];
@@ -83,6 +85,100 @@ const calculateXIRR = (cashflows: { amount: number; date: Date }[]): number => {
     return mid * 100; // Return the best guess if precision is not met
 };
 
+const calculateTWRR = (monthlyValues: MonthlyAccountValue[], transactions: AccountTransaction[], securityAccountIds: Set<string>): number => {
+    // TWRR requires at least one period, which means at least two valuation points.
+    if (!monthlyValues || monthlyValues.length < 2) {
+        return 0;
+    }
+
+    // Ensure valuations are sorted by date
+    const sortedValues = [...monthlyValues].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    // --- Period 1: From the beginning of time to the first valuation date ---
+    const firstValuationDate = new Date(sortedValues[0].date);
+    const firstPeriodNetCashFlow = (transactions || [])
+        .filter(t => {
+            if (new Date(t.date) > firstValuationDate) return false; // Before or on the first valuation date
+            if (t.transactionType === TransactionType.Dividend) return false;
+            if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false; // Exclude internal transfers
+            return true;
+        })
+        .reduce((acc, t) => {
+            const amount = Number(t.amount) || 0;
+            return t.transactionType === TransactionType.Deposit ? acc + amount : acc - amount;
+        }, 0);
+    
+    let subPeriodReturns: number[] = [];
+
+    // Calculate HPR for the first period
+    if (firstPeriodNetCashFlow > 0) {
+        const endValue = sortedValues[0].totalValue;
+        const hpr = (endValue - firstPeriodNetCashFlow) / firstPeriodNetCashFlow;
+        subPeriodReturns.push(1 + hpr);
+    }
+
+    // --- Subsequent Periods: Between consecutive valuations ---
+    for (let i = 1; i < sortedValues.length; i++) {
+        const prevValuation = sortedValues[i - 1];
+        const currentValuation = sortedValues[i];
+
+        const prevDate = new Date(prevValuation.date);
+        const currentDate = new Date(currentValuation.date);
+
+        const periodNetCashFlow = (transactions || [])
+            .filter(t => {
+                const txDate = new Date(t.date);
+                if (txDate <= prevDate || txDate > currentDate) return false; // Strictly between valuations
+                if (t.transactionType === TransactionType.Dividend) return false;
+                if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false;
+                return true;
+            })
+            .reduce((acc, t) => {
+                const amount = Number(t.amount) || 0;
+                return t.transactionType === TransactionType.Deposit ? acc + amount : acc - amount;
+            }, 0);
+
+        const startValue = prevValuation.totalValue;
+        const endValue = currentValuation.totalValue;
+        
+        // Use the formula that assumes cash flows happen at the end of the period
+        if (startValue > 0) {
+            const hpr = (endValue - startValue - periodNetCashFlow) / startValue;
+            subPeriodReturns.push(1 + hpr);
+        }
+    }
+
+    if (subPeriodReturns.length === 0) {
+        return 0;
+    }
+
+    // --- Geometric Linking ---
+    const compoundedReturn = subPeriodReturns.reduce((acc, r) => acc * r, 1);
+    
+    // --- Annualization ---
+    // The period starts from the earliest transaction, not the first valuation
+    const allRelevantDates = (transactions || []).length > 0
+      ? transactions.map(t => new Date(t.date))
+      : [new Date()]; // Fallback
+    const startDate = new Date(Math.min(...allRelevantDates.map(d => d.getTime())));
+    const lastDate = new Date(sortedValues[sortedValues.length - 1].date);
+    
+    const totalDays = (lastDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+
+    if (totalDays <= 0) return 0;
+
+    const periodInYears = totalDays / 365.25;
+
+    // Handle large losses without causing Math.pow to return NaN
+    if (compoundedReturn < 0) {
+        return -100.0;
+    }
+
+    const annualizedTwrr = Math.pow(compoundedReturn, 1 / periodInYears) - 1;
+
+    return annualizedTwrr * 100;
+};
+
 
 const MetricDisplay: React.FC<{ label: string; value: string; tooltip: string }> = ({ label, value, tooltip }) => (
   <div className="text-center" title={tooltip}>
@@ -92,7 +188,7 @@ const MetricDisplay: React.FC<{ label: string; value: string; tooltip: string }>
 );
 
 
-const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, accounts, brokers, initialPortfolio, stockPrices, monthlyValues, showSummary, historicalGains }) => {
+const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, accounts, brokers, initialPortfolio, stockPrices, monthlyValues, showSummary, historicalGains, alertThresholds }) => {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTrendYear, setSelectedTrendYear] = useState<number | string>('전체');
   const [isRebalancingAlertExpanded, setIsRebalancingAlertExpanded] = useState(false);
@@ -227,17 +323,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     
     const totalAssets = currentStockValue + totalCashBalance;
 
-    const tradeDates = (trades || []).map(t => new Date(t.date).getTime());
-    const txDates = (transactions || []).map(t => new Date(t.date).getTime());
-    const allTimestamps = [...tradeDates, ...txDates];
-    const firstDate = allTimestamps.length > 0 ? new Date(Math.min(...allTimestamps)) : null;
-
-    let investmentPeriodInYears = 0;
-    if (firstDate) {
-      const periodInMillis = new Date().getTime() - firstDate.getTime();
-      investmentPeriodInYears = Math.max(periodInMillis, 1000 * 60 * 60 * 24) / (1000 * 60 * 60 * 24 * 365.25);
-    }
-    
     const profitLoss = totalAssets - netExternalDeposits;
     
     // 1. CCR
@@ -309,8 +394,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     const ytdBase = startOfYearAssets + netInflowThisYear;
     const ytd = ytdBase > 0 ? (ytdProfit / ytdBase) * 100 : 0;
     
-    // 4. Simple Annualized Return
-    const simpleAnnualized = investmentPeriodInYears > 0 ? ccr / investmentPeriodInYears : 0;
+    // 4. TWRR
+    const twrr = calculateTWRR(monthlyValues, transactions, securityAccountIds);
 
     const portfolioStockIds = new Set((stocks || []).filter(s => s.isPortfolio).map(s => s.id));
     
@@ -368,22 +453,27 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
       ccr,
       mwrr,
       ytd,
-      simpleAnnualized,
+      twrr,
       chartData: portfolioChartData,
       totalPortfolioValue: totalPortfolioStockValue,
     };
   }, [trades, transactions, stocks, stockPrices, stockMap, initialPortfolio, totalCashBalance, netExternalDeposits, monthlyValues, securityAccountIds, accounts, historicalGains]);
 
   const rebalancingAlerts = useMemo(() => {
-    const warnings: typeof financialSummary.chartData = [];
-    const cautions: typeof financialSummary.chartData = [];
+    type AlertableCategory = (typeof financialSummary.chartData[0]);
+    const warnings: AlertableCategory[] = [];
+    const cautions: AlertableCategory[] = [];
+    
+    const { caution, warning } = alertThresholds.global;
 
-    financialSummary.chartData.forEach(item => {
-        const deviation = Math.abs(item.difference);
-        if (deviation > 5) {
-            warnings.push(item);
-        } else if (deviation > 3) {
-            cautions.push(item);
+    financialSummary.chartData.forEach(categoryData => {
+        if (categoryData.targetPercentage > 0) {
+            const deviation = Math.abs(categoryData.difference);
+            if (deviation > warning) {
+                warnings.push(categoryData);
+            } else if (deviation > caution) {
+                cautions.push(categoryData);
+            }
         }
     });
 
@@ -391,7 +481,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
     cautions.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
 
     return { warnings, cautions };
-  }, [financialSummary.chartData]);
+  }, [financialSummary.chartData, alertThresholds.global]);
+
+  const hasWarnings = rebalancingAlerts.warnings.length > 0;
+  
+  useEffect(() => {
+    if (hasWarnings) {
+      setIsRebalancingAlertExpanded(true);
+    }
+  }, [hasWarnings]);
+
 
   const monthlyPLData = useMemo(() => {
     const yearData = (monthlyValues || [])
@@ -514,15 +613,18 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
         {(rebalancingAlerts.warnings.length > 0 || rebalancingAlerts.cautions.length > 0) ? (
           <>
             <div
-              className="p-4 cursor-pointer flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-800/50"
+              className={`p-4 cursor-pointer flex justify-between items-center transition-colors ${hasWarnings ? 'bg-red-50 dark:bg-red-900/20' : ''} hover:bg-gray-50 dark:hover:bg-slate-800/50`}
               onClick={() => setIsRebalancingAlertExpanded(!isRebalancingAlertExpanded)}
               aria-expanded={isRebalancingAlertExpanded}
             >
               <div>
-                  <h2 className="text-xl font-bold text-light-text dark:text-dark-text"><span className="text-loss">🔔</span> 리밸런싱 알림</h2>
+                  <h2 className={`text-xl font-bold flex items-center gap-2 ${hasWarnings ? 'text-loss' : 'text-light-text dark:text-dark-text'}`}>
+                    <span className={`text-2xl ${hasWarnings ? 'animate-pulse-warning' : ''}`}>🔔</span>
+                    <span>리밸런싱 알림</span>
+                  </h2>
                   {!isRebalancingAlertExpanded && (
                     <p className="text-sm text-light-secondary dark:text-dark-secondary mt-1">
-                      총 {rebalancingAlerts.warnings.length + rebalancingAlerts.cautions.length}개 항목의 비중 조절이 필요합니다. (경고 {rebalancingAlerts.warnings.length}, 주의 {rebalancingAlerts.cautions.length})
+                      총 {rebalancingAlerts.warnings.length + rebalancingAlerts.cautions.length}개 카테고리의 비중 조절이 필요합니다. (경고 {rebalancingAlerts.warnings.length}, 주의 {rebalancingAlerts.cautions.length})
                     </p>
                   )}
               </div>
@@ -534,23 +636,23 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
                   <p className="text-sm text-light-secondary dark:text-dark-secondary pt-3">
                     포트폴리오 목표 비중과 현재 비중의 차이가 발생했습니다. 리밸런싱을 고려해 보세요.
                   </p>
-                  {rebalancingAlerts.warnings.map(item => (
-                    <div key={item.name} className="flex justify-between items-center p-3 bg-red-50 dark:bg-red-900/30 rounded-lg">
-                      <span className="font-semibold">{item.name}</span>
+                  {rebalancingAlerts.warnings.map(category => (
+                    <div key={category.name} className="flex justify-between items-center p-3 bg-red-100 dark:bg-red-900/30 rounded-lg">
+                      <span className="font-semibold">{category.name}</span>
                       <div className="text-right">
                         <span className="font-bold text-loss">
-                          목표 대비: {item.difference >= 0 ? '+' : ''}{item.difference.toFixed(1)}%
+                          목표 대비: {category.difference >= 0 ? '+' : ''}{category.difference.toFixed(1)}%
                         </span>
                         <span className="ml-2 text-xs font-bold text-white bg-loss px-2 py-1 rounded-full">경고</span>
                       </div>
                     </div>
                   ))}
-                  {rebalancingAlerts.cautions.map(item => (
-                    <div key={item.name} className="flex justify-between items-center p-3 bg-yellow-50 dark:bg-yellow-900/30 rounded-lg">
-                      <span className="font-semibold">{item.name}</span>
+                  {rebalancingAlerts.cautions.map(category => (
+                    <div key={category.name} className="flex justify-between items-center p-3 bg-yellow-50 dark:bg-yellow-900/30 rounded-lg">
+                      <span className="font-semibold">{category.name}</span>
                       <div className="text-right">
                         <span className="font-bold text-yellow-600 dark:text-yellow-400">
-                          목표 대비: {item.difference >= 0 ? '+' : ''}{item.difference.toFixed(1)}%
+                          목표 대비: {category.difference >= 0 ? '+' : ''}{category.difference.toFixed(1)}%
                         </span>
                         <span className="ml-2 text-xs font-bold text-yellow-800 dark:text-yellow-200 bg-yellow-200 dark:bg-yellow-600/50 px-2 py-1 rounded-full">주의</span>
                       </div>
@@ -561,7 +663,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
           </>
         ) : (
           <div className="p-4">
-              <h2 className="text-xl font-bold text-light-text dark:text-dark-text"><span className="text-profit">🔔</span> 리밸런싱 알림</h2>
+              <h2 className="text-xl font-bold text-light-text dark:text-dark-text flex items-center gap-2"><span className="text-profit">✅</span><span>리밸런싱 알림</span></h2>
               <p className="text-sm text-green-600 dark:text-green-400 mt-1">
                 포트폴리오가 목표 비중에 맞게 잘 유지되고 있습니다.
               </p>
@@ -619,14 +721,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
             tooltip="입출금 시점과 규모를 모두 반영한 연환산 수익률입니다. 투자자의 실제 성과를 나타냅니다."
           />
           <MetricDisplay 
+            label="시간가중 수익률 (TWRR)" 
+            value={`${financialSummary.twrr.toFixed(2)}%`}
+            tooltip="입출금의 영향을 제거한 순수 포트폴리오의 연환산 수익률입니다."
+          />
+          <MetricDisplay 
             label="올해 (YTD)" 
             value={`${financialSummary.ytd.toFixed(2)}%`} 
             tooltip="올해 1월 1일부터 현재까지의 수익률입니다."
-          />
-          <MetricDisplay 
-            label="연환산 (단리)" 
-            value={`${financialSummary.simpleAnnualized.toFixed(2)}%`}
-            tooltip="누적 수익률을 연 단위로 환산한 단리 수익률입니다."
           />
         </div>
       </Card>
@@ -676,7 +778,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ trades, transactions, stocks, a
                   <div key={item.name}>
                     <div 
                       className={`p-2 rounded-lg cursor-pointer transition-colors ${expandedCategory === item.name ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800/50'}`}
-                      onClick={() => toggleCategory(item.name)}
+                      onClick={() => toggleCategory(item.name as PortfolioCategory)}
                       aria-expanded={expandedCategory === item.name}
                       >
                         <div className="flex justify-between items-center text-sm">

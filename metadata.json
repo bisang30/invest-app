@@ -1,5 +1,5 @@
 {
-  "name": "Investment Management App V2.0.2",
-  "description": "A comprehensive application for managing investment portfolios, tracking trades, and analyzing performance with AI-powered insights.",
+  "name": "Investment Management App V2.0.8",
+  "description": "A comprehensive application for managing investment portfolios. This version features a corrected Time-Weighted Rate of Return (TWRR) calculation for improved accuracy and adds stock names to the rebalancing alert settings Excel export for better readability.",
   "requestFramePermissions": []
 }

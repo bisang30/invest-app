@@ -172,7 +172,17 @@ const StockStatusScreen: React.FC<StockStatusScreenProps> = ({ trades, stocks, s
                                     <div className="flex-1 pr-2">
                                       <div className="flex items-baseline flex-wrap">
                                           <h3 className="text-lg font-bold text-light-text dark:text-dark-text mr-2">{holding.name}</h3>
-                                          <p className="text-xs text-light-secondary dark:text-dark-secondary">{holding.ticker}</p>
+                                          {holding.isEtf && (
+                                            <span className="text-xs font-semibold text-gray-800 dark:text-gray-200 bg-gray-300 dark:bg-gray-600 px-2 py-0.5 rounded-full mr-2">
+                                                ETF
+                                            </span>
+                                          )}
+                                          <p className="text-xs text-light-secondary dark:text-dark-secondary">
+                                              {holding.ticker}
+                                              {holding.isEtf && holding.expenseRatio !== undefined && (
+                                                <span className="ml-1.5">({holding.expenseRatio.toFixed(3)}%)</span>
+                                              )}
+                                          </p>
                                       </div>
                                       <p className="text-sm text-light-secondary dark:text-dark-secondary mt-1">
                                           수량: {holding.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}

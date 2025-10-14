@@ -1,4 +1,5 @@
 
+
 export const Theme = {
   Light: 'light',
   Dark: 'dark',
@@ -64,6 +65,8 @@ export interface Stock {
   name: string;
   category: PortfolioCategory;
   isPortfolio: boolean;
+  isEtf?: boolean;
+  expenseRatio?: number;
 }
 
 export interface Trade {
@@ -104,4 +107,15 @@ export interface HistoricalGain {
   stockName: string;
   realizedPnl: number;
   note?: string;
+}
+
+export interface Thresholds {
+  caution: number;
+  warning: number;
+}
+
+export interface AlertThresholds {
+  global: Thresholds;
+  categories: { [key in PortfolioCategory]?: Partial<Thresholds> };
+  stocks: { [stockId: string]: Partial<Thresholds> };
 }

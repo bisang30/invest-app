@@ -1,19 +1,20 @@
 
 
 
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
-import { Broker, Account, Stock, InitialPortfolio, PortfolioCategory, Trade, AccountTransaction, BankAccount, Theme, TradeType, TransactionType, MonthlyAccountValue, HistoricalGain } from '../types';
+import { Broker, Account, Stock, InitialPortfolio, PortfolioCategory, Trade, AccountTransaction, BankAccount, Theme, TradeType, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds } from '../types';
 import { PORTFOLIO_CATEGORIES, DATA_VERSION } from '../constants';
 import { exportAllData } from '../services/exportService';
 import * as XLSX from 'xlsx';
 import { 
   ChevronUpIcon, ChevronDownIcon, BuildingOffice2Icon, IdentificationIcon, BuildingLibraryIcon,
-  ChartBarIcon, ChartPieIcon, CircleStackIcon, LockClosedIcon, Cog8ToothIcon
+  ChartBarIcon, ChartPieIcon, CircleStackIcon, LockClosedIcon, Cog8ToothIcon, BellAlertIcon
 } from '../components/Icons';
 
 const findValidXlsxLibrary = (mod: any): any | null => {
@@ -54,8 +55,13 @@ const findValidXlsxLibrary = (mod: any): any | null => {
 };
 
 
+interface StockFormState extends Omit<Stock, 'id' | 'expenseRatio'> {
+  expenseRatio: string;
+}
+
 // FIX: Define IndexScreenProps interface to resolve 'Cannot find name' error.
 interface IndexScreenProps {
+  appVersion: string;
   brokers: Broker[];
   setBrokers: React.Dispatch<React.SetStateAction<Broker[]>>;
   accounts: Account[];
@@ -79,6 +85,8 @@ interface IndexScreenProps {
   showSummary: boolean;
   setShowSummary: React.Dispatch<React.SetStateAction<boolean>>;
   historicalGains: HistoricalGain[];
+  alertThresholds: AlertThresholds;
+  setAlertThresholds: React.Dispatch<React.SetStateAction<AlertThresholds>>;
 }
 
 interface SettingsSectionProps {
@@ -118,6 +126,7 @@ const SettingsSection: React.FC<SettingsSectionProps> = ({ title, icon, isOpen, 
 
 
 const IndexScreen: React.FC<IndexScreenProps> = ({
+  appVersion,
   brokers, setBrokers,
   accounts, setAccounts,
   bankAccounts, setBankAccounts,
@@ -131,7 +140,8 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   backgroundFetchInterval, setBackgroundFetchInterval,
   monthlyValues, setMonthlyValues,
   showSummary, setShowSummary,
-  historicalGains
+  historicalGains,
+  alertThresholds, setAlertThresholds
 }) => {
   const [openSection, setOpenSection] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState('');
@@ -154,7 +164,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   // Stock management modal state
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [editingStock, setEditingStock] = useState<Stock | null>(null);
-  const [stockForm, setStockForm] = useState<Omit<Stock, 'id'>>({ ticker: '', name: '', category: PortfolioCategory.Stock, isPortfolio: false });
+  const [stockForm, setStockForm] = useState<StockFormState>({ ticker: '', name: '', category: PortfolioCategory.Stock, isPortfolio: false, isEtf: false, expenseRatio: '' });
 
   // Portfolio state
   const [isPortfolioEditing, setIsPortfolioEditing] = useState(false);
@@ -188,6 +198,11 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   
     // App Settings State
   const [localBackgroundInterval, setLocalBackgroundInterval] = useState(String(backgroundFetchInterval));
+  
+  const [editingThresholds, setEditingThresholds] = useState<AlertThresholds>(alertThresholds);
+  useEffect(() => {
+    setEditingThresholds(alertThresholds);
+  }, [alertThresholds]);
 
   useEffect(() => {
     setLocalBackgroundInterval(String(backgroundFetchInterval));
@@ -398,10 +413,10 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   const openStockModal = (stock: Stock | null) => {
     if (stock) {
         setEditingStock(stock);
-        setStockForm({ name: stock.name, ticker: stock.ticker, category: stock.category, isPortfolio: stock.isPortfolio || false });
+        setStockForm({ name: stock.name, ticker: stock.ticker, category: stock.category, isPortfolio: stock.isPortfolio || false, isEtf: stock.isEtf || false, expenseRatio: stock.expenseRatio ? String(stock.expenseRatio) : '' });
     } else {
         setEditingStock(null);
-        setStockForm({ ticker: '', name: '', category: PortfolioCategory.Stock, isPortfolio: false });
+        setStockForm({ ticker: '', name: '', category: PortfolioCategory.Stock, isPortfolio: false, isEtf: false, expenseRatio: '' });
     }
     setIsStockModalOpen(true);
   };
@@ -414,8 +429,12 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   const handleStockFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     if (type === 'checkbox') {
-        const { checked } = e.target as HTMLInputElement;
-        setStockForm(prev => ({...prev, [name]: checked}));
+        const { checked, name: checkboxName } = e.target as HTMLInputElement;
+        setStockForm(prev => ({...prev, [checkboxName]: checked}));
+    } else if (name === 'expenseRatio') {
+      if (value === '' || /^\d*\.?\d*$/.test(value)) {
+        setStockForm(prev => ({ ...prev, expenseRatio: value }));
+      }
     } else {
         setStockForm(prev => ({ ...prev, [name]: name === 'ticker' ? value.toUpperCase() : value }));
     }
@@ -423,8 +442,11 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
 
   const handleSaveStock = () => {
     if (stockForm.ticker.trim() && stockForm.name.trim()) {
+        const finalExpenseRatio = stockForm.isEtf ? (parseFloat(stockForm.expenseRatio) || 0) : undefined;
+        const stockDataToSave = { ...stockForm, expenseRatio: finalExpenseRatio };
+        
         if (editingStock) {
-            const updatedStock = { ...editingStock, ...stockForm };
+            const updatedStock = { ...editingStock, ...stockDataToSave };
             setStocks(prev => (prev || []).map(s => s.id === editingStock.id ? updatedStock : s));
             if (editingStock.isPortfolio && !updatedStock.isPortfolio) {
               setInitialPortfolio(prev => {
@@ -434,7 +456,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
               });
             }
         } else {
-            setStocks(prev => [...(prev || []), { ...stockForm, id: Date.now().toString() }]);
+            setStocks(prev => [...(prev || []), { ...stockDataToSave, id: Date.now().toString() }]);
         }
         closeStockModal();
     } else {
@@ -554,13 +576,46 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
     setToastMessage(`백그라운드 조회 주기가 ${minutes}분으로 설정되었습니다.`);
     setTimeout(() => setToastMessage(''), 3000);
   };
+  
+  const handleThresholdChange = (level: 'global' | 'categories' | 'stocks', type: 'caution' | 'warning', value: string, id?: string) => {
+      const numValue = value === '' ? undefined : parseFloat(value);
+      
+      setEditingThresholds(prev => {
+        const newThresholds = JSON.parse(JSON.stringify(prev)); // Deep copy
+        
+        if (level === 'global') {
+          newThresholds.global[type] = numValue ?? (type === 'caution' ? 3 : 5);
+        } else if (id) {
+          if (!newThresholds[level]) newThresholds[level] = {};
+          
+          if (numValue === undefined) {
+            if (newThresholds[level][id]) {
+              delete newThresholds[level][id][type];
+              if (Object.keys(newThresholds[level][id]).length === 0) {
+                delete newThresholds[level][id];
+              }
+            }
+          } else {
+            if (!newThresholds[level][id]) newThresholds[level][id] = {};
+            newThresholds[level][id][type] = numValue;
+          }
+        }
+        return newThresholds;
+      });
+  };
+
+  const handleSaveThresholds = () => {
+      setAlertThresholds(editingThresholds);
+      setToastMessage('알림 기준이 저장되었습니다.');
+      setTimeout(() => setToastMessage(''), 3000);
+  };
 
 
   // Data Backup & Restore
   const LOCAL_STORAGE_KEYS = [
     'theme', 'app-password', 'brokers', 'accounts', 'stocks', 'trades',
     'transactions', 'initialPortfolio', 'monthlyValues', 'data-version', 'bankAccounts',
-    'historicalGains'
+    'historicalGains', 'alertThresholds', 'backgroundFetchInterval', 'showSummary'
   ];
   
   // --- Data Import from Excel ---
@@ -611,7 +666,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           return xlsxLib.utils.sheet_to_json(ws);
       };
 
-      setImportStatus('데이터 변환 중 (1/10): 증권사...');
+      setImportStatus('데이터 변환 중 (1/11): 증권사...');
       const brokersData = safeSheetToJSON(workbook, '증권사');
       const newBrokers: Broker[] = [];
       const brokerNameToIdMap = new Map<string, string>();
@@ -624,7 +679,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      setImportStatus('데이터 변환 중 (2/10): 은행계좌...');
+      setImportStatus('데이터 변환 중 (2/11): 은행계좌...');
       const bankAccountsData = safeSheetToJSON(workbook, '은행계좌');
       const newBankAccounts: BankAccount[] = [];
       const bankAccountIdentifierToIdMap = new Map<string, string>();
@@ -641,7 +696,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      setImportStatus('데이터 변환 중 (3/10): 증권계좌...');
+      setImportStatus('데이터 변환 중 (3/11): 증권계좌...');
       const accountsData = safeSheetToJSON(workbook, '증권계좌');
       const newAccounts: Account[] = [];
       const accountNameToIdMap = new Map<string, string>();
@@ -656,7 +711,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      setImportStatus('데이터 변환 중 (4/10): 종목...');
+      setImportStatus('데이터 변환 중 (4/11): 종목...');
       const stocksData = safeSheetToJSON(workbook, '종목');
       const newStocks: Stock[] = [];
       const stockTickerToIdMap = new Map<string, string>();
@@ -665,14 +720,17 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           const ticker = row['티커']?.trim().toUpperCase();
           const category = row['카테고리'] as PortfolioCategory;
           const isPortfolio = row['포트폴리오 포함'] === '예';
+          const isEtf = row['ETF 여부'] === '예';
+          const expenseRatio = isEtf ? parseFloat(row['실부담비용률 (%)']) : undefined;
+
           if (name && ticker && category && !stockTickerToIdMap.has(ticker)) {
               const newId = `stock-${Date.now()}-${Math.random()}`;
-              newStocks.push({ id: newId, name, ticker, category, isPortfolio });
+              newStocks.push({ id: newId, name, ticker, category, isPortfolio, isEtf, expenseRatio });
               stockTickerToIdMap.set(ticker, newId);
           }
       });
 
-      setImportStatus('데이터 변환 중 (5/10): 포트폴리오...');
+      setImportStatus('데이터 변환 중 (5/11): 포트폴리오...');
       const portfolioData = safeSheetToJSON(workbook, '포트폴리오');
       const newInitialPortfolio: InitialPortfolio = {};
       portfolioData.forEach(row => {
@@ -684,7 +742,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      setImportStatus('데이터 변환 중 (6/10): 매매기록...');
+      setImportStatus('데이터 변환 중 (6/11): 매매기록...');
       const tradesData = safeSheetToJSON(workbook, '매매기록');
       const newTrades: Trade[] = [];
       tradesData.forEach(row => {
@@ -708,7 +766,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
         }
       });
       
-      setImportStatus('데이터 변환 중 (7/10): 입출금 및 배당 기록...');
+      setImportStatus('데이터 변환 중 (7/11): 입출금 및 배당 기록...');
       const newTransactions: AccountTransaction[] = [];
       const allAccountsMapForImport = new Map([...accountNameToIdMap.entries(), ...bankAccountIdentifierToIdMap.entries()]);
       
@@ -756,7 +814,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      setImportStatus('데이터 변환 중 (8/10): 월말결산...');
+      setImportStatus('데이터 변환 중 (8/11): 월말결산...');
       const monthlyValuesData = safeSheetToJSON(workbook, '월말결산');
       const newMonthlyValues: MonthlyAccountValue[] = [];
       monthlyValuesData.forEach(row => {
@@ -772,7 +830,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      setImportStatus('데이터 변환 중 (9/10): 초기손익기록...');
+      setImportStatus('데이터 변환 중 (9/11): 초기손익기록...');
       const historicalGainsData = safeSheetToJSON(workbook, '초기손익기록');
       const newHistoricalGains: HistoricalGain[] = [];
       historicalGainsData.forEach(row => {
@@ -791,9 +849,53 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
               });
           }
       });
+      
+      setImportStatus('데이터 변환 중 (10/11): 리밸런싱 알림...');
+      const alertThresholdsData = safeSheetToJSON(workbook, '리밸런싱알림설정');
+      const newAlertThresholds: AlertThresholds = {
+          global: { caution: 3, warning: 5 },
+          categories: {},
+          stocks: {}
+      };
+      alertThresholdsData.forEach(row => {
+          const type = row['구분'];
+          const id = row['ID'] || row['ID(티커)'];
+          const caution = parseFloat(row['주의 기준 (%)']);
+          const warning = parseFloat(row['경고 기준 (%)']);
+          if (type === '전체') {
+              if (!isNaN(caution)) newAlertThresholds.global.caution = caution;
+              if (!isNaN(warning)) newAlertThresholds.global.warning = warning;
+          } else if (type === '개별 종목') {
+              const stockId = stockTickerToIdMap.get(id);
+              if (stockId) {
+                  newAlertThresholds.stocks[stockId] = {};
+                  if (!isNaN(caution)) newAlertThresholds.stocks[stockId].caution = caution;
+                  if (!isNaN(warning)) newAlertThresholds.stocks[stockId].warning = warning;
+              }
+          }
+      });
 
+      setImportStatus('데이터 변환 중 (11/11): 앱 설정...');
+      const appSettingsData = safeSheetToJSON(workbook, '앱설정');
+      let newBackgroundFetchInterval = 30;
+      let newShowSummary = true;
+      appSettingsData.forEach(row => {
+          const settingName = row['설정명'];
+          const settingValue = row['설정값'];
+          if (settingName === '백그라운드 조회 주기 (분)') {
+              const interval = parseInt(settingValue, 10);
+              if (!isNaN(interval) && interval > 0) newBackgroundFetchInterval = interval;
+          } else if (settingName === '홈 화면 요약 정보 표시') {
+              newShowSummary = settingValue === '예';
+          }
+      });
+
+      // FIX: The 'keysToClear' variable was not defined, causing a reference error.
+      // It is now defined by filtering LOCAL_STORAGE_KEYS to exclude user settings ('theme', 'app-password'),
+      // which should be preserved during a data import.
+      const keysToClear = LOCAL_STORAGE_KEYS.filter(key => key !== 'theme' && key !== 'app-password');
+      
       setImportStatus('데이터 저장 중...');
-      const keysToClear = LOCAL_STORAGE_KEYS.filter(k => k !== 'theme' && k !== 'app-password');
       keysToClear.forEach(key => localStorage.removeItem(key));
       
       localStorage.setItem('brokers', JSON.stringify(newBrokers));
@@ -805,6 +907,9 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       localStorage.setItem('transactions', JSON.stringify(newTransactions));
       localStorage.setItem('monthlyValues', JSON.stringify(newMonthlyValues));
       localStorage.setItem('historicalGains', JSON.stringify(newHistoricalGains));
+      localStorage.setItem('alertThresholds', JSON.stringify(newAlertThresholds));
+      localStorage.setItem('backgroundFetchInterval', JSON.stringify(newBackgroundFetchInterval));
+      localStorage.setItem('showSummary', JSON.stringify(newShowSummary));
       localStorage.setItem('data-version', String(DATA_VERSION));
 
       setImportStatus('불러오기 완료! 앱을 새로고침합니다.');
@@ -841,300 +946,427 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       transactions,
       monthlyValues,
       historicalGains,
+      alertThresholds,
+      backgroundFetchInterval,
+      showSummary,
       `투자 관리 앱 전체 데이터_${new Date().toISOString().split('T')[0]}`
     );
   };
-  
-  const sections = [
-    {
-      id: 'brokers',
-      title: '증권사 관리',
-      icon: <BuildingOffice2Icon className="w-6 h-6 text-blue-500" />,
-      content: (
-        <>
-          <div className="flex justify-end mb-4">
-            <Button onClick={() => openBrokerModal(null)}>증권사 추가</Button>
-          </div>
-          <ul className="mt-4 space-y-2">
-            {(brokers || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 증권사가 없습니다.</p> :
-              (brokers || []).map(b => (
-                <li key={b.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
-                  <span>{b.name}</span>
-                  <div className="flex gap-2">
-                    <Button onClick={() => openBrokerModal(b)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
-                    <Button onClick={() => handleDeleteBroker(b.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
-                  </div>
-                </li>
-              ))
-            }
-          </ul>
-        </>
-      ),
-    },
-    {
-      id: 'accounts',
-      title: '증권계좌 관리',
-      icon: <IdentificationIcon className="w-6 h-6 text-green-500" />,
-      content: (
-        <>
-          <div className="flex justify-end mb-4">
-            <Button onClick={() => openAccountModal(null)}>계좌 추가</Button>
-          </div>
-          <ul className="mt-4 space-y-2">
-            {(accounts || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 계좌가 없습니다.</p> :
-              (accounts || []).map(a => (
-                <li key={a.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
-                  <span>{a.name} <span className="text-sm text-light-secondary dark:text-dark-secondary">({brokerMap.get(a.brokerId) || '알 수 없는 증권사'})</span></span>
-                  <div className="flex gap-2">
-                    <Button onClick={() => openAccountModal(a)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
-                    <Button onClick={() => handleDeleteAccount(a.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
-                  </div>
-                </li>
-              ))
-            }
-          </ul>
-        </>
-      ),
-    },
-    {
-      id: 'bankAccounts',
-      title: '은행 계좌 관리',
-      icon: <BuildingLibraryIcon className="w-6 h-6 text-amber-500" />,
-      content: (
-        <>
-          <div className="flex justify-end mb-4">
-              <Button onClick={() => openBankAccountModal(null)}>은행 계좌 추가</Button>
-          </div>
-          <ul className="mt-4 space-y-2">
-          {(bankAccounts || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 은행 계좌가 없습니다.</p> :
-            (bankAccounts || []).map(a => (
-              <li key={a.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
-                <span>{a.name} <span className="text-sm text-light-secondary dark:text-dark-secondary">({a.bankName})</span></span>
-                <div className="flex gap-2">
-                  <Button onClick={() => openBankAccountModal(a)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
-                  <Button onClick={() => handleDeleteBankAccount(a.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
-                </div>
-              </li>
-            ))
-          }
-          </ul>
-        </>
-      ),
-    },
-    {
-      id: 'stocks',
-      title: '주식 종목 관리',
-      icon: <ChartBarIcon className="w-6 h-6 text-purple-500" />,
-      content: (
-        <>
-          <div className="flex justify-end mb-4">
-            <Button onClick={() => openStockModal(null)}>종목 추가</Button>
-          </div>
-          <ul className="mt-4 space-y-2">
-            {(stocks || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 종목이 없습니다.</p> :
-              (stocks || []).map(s => (
-                <li key={s.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
-                  <div>
-                    <span>{s.name} ({s.ticker}) - {s.category}</span>
-                    {s.isPortfolio && <span className="ml-2 text-xs font-semibold text-white bg-light-primary dark:bg-dark-primary px-2 py-1 rounded-full">포트폴리오</span>}
-                  </div>
-                  <div className="flex gap-2">
-                      <Button onClick={() => openStockModal(s)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
-                      <Button onClick={() => handleDeleteStock(s.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
-                  </div>
-                </li>
-              ))
-            }
-          </ul>
-        </>
-      ),
-    },
-    {
-      id: 'portfolio',
-      title: '포트폴리오 비중 설정 (%)',
-      icon: <ChartPieIcon className="w-6 h-6 text-cyan-500" />,
-      content: (
-        <>
-          {PORTFOLIO_CATEGORIES.map((category: string) => {
-            const categoryStocks = portfolioStocks.filter(s => s.category === category);
-            if (categoryStocks.length === 0) return null;
-            
-            const categoryTotal = categoryStocks.reduce((sum, stock) => {
-              const valueStr = isPortfolioEditing ? editingPortfolio[stock.id] : String((initialPortfolio || {})[stock.id] || '');
-              return sum + (parseFloat(valueStr) || 0);
-            }, 0);
-            
-            const isCategoryOpen = openPortfolioCategories.has(category);
 
-            return (
-              <div key={category} className="mb-4 last:mb-0">
-                <div 
-                  onClick={() => togglePortfolioCategory(category)}
-                  className="cursor-pointer flex justify-between items-center p-2 rounded hover:bg-gray-100 dark:hover:bg-slate-800/50 transition-colors"
-                  aria-expanded={isCategoryOpen}
-                  aria-controls={`portfolio-category-${category}`}
-                >
-                  <h3 className="text-lg font-semibold text-light-text dark:text-dark-text">
-                    {category}
-                  </h3>
-                  <div className="flex items-center gap-4">
-                    <span className={`text-base font-bold ${isPortfolioEditing ? 'text-light-primary dark:text-dark-primary' : 'text-light-text dark:text-dark-text'}`}>{categoryTotal.toFixed(2)}%</span>
-                    {isCategoryOpen 
-                      ? <ChevronUpIcon className="w-5 h-5 text-light-secondary dark:text-dark-secondary" /> 
-                      : <ChevronDownIcon className="w-5 h-5 text-light-secondary dark:text-dark-secondary" />}
-                  </div>
-                </div>
-                {isCategoryOpen && (
-                  <div id={`portfolio-category-${category}`} className="mt-3 space-y-4 pl-4 pr-2 pb-2 border-l-2 border-gray-200 dark:border-slate-700">
-                    {categoryStocks.map(stock => (
-                      <Input 
-                        key={stock.id}
-                        label={`${stock.name} (${stock.ticker})`}
-                        id={`portfolio-${stock.id}`}
-                        type="text"
-                        inputMode="decimal"
-                        value={
-                          isPortfolioEditing
-                            ? editingPortfolio[stock.id] ?? ''
-                            : ((initialPortfolio || {})[stock.id] ? String((initialPortfolio || {})[stock.id]) : '')
-                        }
-                        onChange={(e) => handlePortfolioInputChange(stock.id, e.target.value)}
-                        disabled={!isPortfolioEditing}
-                        placeholder="비중(%)"
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-          
-          {portfolioStocks.length === 0 ? (
-            <p className="text-center text-sm text-light-secondary dark:text-dark-secondary py-4">포트폴리오에 포함된 종목이 없습니다. '주식 종목 관리'에서 종목을 추가하고 '포트폴리오 포함'을 체크해주세요.</p>
-          ) : (
-            <>
-              <p className="text-sm mt-4 text-light-secondary dark:text-dark-secondary">총 합이 100%가 되도록 설정해주세요.</p>
-              {isPortfolioEditing && (() => {
-                  let total = 0;
-                  portfolioStocks.forEach(stock => {
-                    total += parseFloat(editingPortfolio[stock.id] || '0') || 0;
-                  });
-                  return (
-                    <p className="text-md mt-2 font-semibold text-right">
-                      현재 총 합: {total.toFixed(2)}%
-                    </p>
-                  );
-              })()}
-            </>
-          )}
-          
-          <div className="flex justify-end mt-4 gap-2">
-            {isPortfolioEditing ? (
-              <>
-                <Button onClick={handleSavePortfolio}>저장</Button>
-                <Button onClick={handleCancelPortfolioEdit} variant="secondary">취소</Button>
-              </>
-            ) : (
-              <Button onClick={handleEditPortfolio} disabled={portfolioStocks.length === 0}>변경</Button>
-            )}
-          </div>
-        </>
-      ),
-    },
-    {
-      id: 'appSettings',
-      title: '앱 설정',
-      icon: <Cog8ToothIcon className="w-6 h-6 text-slate-500" />,
-      content: (
-        <div className="space-y-4">
-          <div>
-            <p className="text-sm text-light-secondary dark:text-dark-secondary">
-              앱이 백그라운드(비활성) 상태일 때 시세를 가져오는 주기를 설정합니다. 
-              주기가 짧을수록 배터리 소모가 늘어날 수 있습니다. (앱 활성 시에는 5분으로 고정)
-            </p>
-            <div className="flex items-end gap-4 mt-2">
-              <div className="flex-grow">
-                <Input
-                  label="백그라운드 조회 주기 (분)"
-                  id="backgroundInterval"
-                  type="text"
-                  inputMode="numeric"
-                  value={localBackgroundInterval}
-                  onChange={handleBackgroundIntervalChange}
-                />
-              </div>
-              <Button onClick={handleSaveBackgroundInterval}>
-                저장
-              </Button>
-            </div>
-          </div>
-          <div className="pt-4 mt-4 border-t border-gray-200/50 dark:border-slate-700/50">
-            <div className="flex justify-between items-center">
-              <div>
-                <h4 className="font-semibold text-light-text dark:text-dark-text">홈 화면 요약 정보 표시</h4>
-                <p className="text-sm text-light-secondary dark:text-dark-secondary">
-                  총 자산, 누적 순입금액, 누적 수익을 홈 화면에 표시합니다.
-                </p>
-              </div>
-              <label htmlFor="show-summary-toggle" className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" id="show-summary-toggle" className="sr-only peer" checked={showSummary} onChange={() => setShowSummary(p => !p)} />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
-          </div>
-        </div>
-      ),
-    },
-    {
-      id: 'data',
-      title: '데이터 관리',
-      icon: <CircleStackIcon className="w-6 h-6 text-rose-500" />,
-      content: (
-        <>
-          <div className="flex flex-wrap gap-4">
-            <Button onClick={handleImportClick} variant="secondary">엑셀에서 불러오기</Button>
-            <Button onClick={handleExportAllData} variant="secondary">전체 데이터 엑셀로 내보내기</Button>
-             <input
-                type="file"
-                ref={importFileInputRef}
-                onChange={handleImportFileChange}
-                accept=".xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                className="hidden"
-            />
-          </div>
-          <p className="text-sm mt-4 text-light-secondary dark:text-dark-secondary">
-              모든 데이터를 하나의 엑셀 파일로 내보내거나, 템플릿에 맞는 엑셀 파일의 데이터를 앱으로 가져올 수 있습니다.
-          </p>
-        </>
-      ),
-    },
-    {
-      id: 'password',
-      title: '비밀번호 설정',
-      icon: <LockClosedIcon className="w-6 h-6 text-red-500" />,
-      content: (
-        <div className="space-y-4">
-          <Input label="새 비밀번호" id="newPassword" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-          <Input label="비밀번호 확인" id="confirmPassword" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
-          <Button onClick={handlePasswordSet}>{password ? '비밀번호 변경' : '비밀번호 설정'}</Button>
-        </div>
-      ),
-    }
+  const stocksByCategory = useMemo(() => {
+    const grouped: { [key in PortfolioCategory]?: Stock[] } = {};
+    (stocks || []).forEach(stock => {
+        if (!grouped[stock.category]) {
+            grouped[stock.category] = [];
+        }
+        grouped[stock.category]!.push(stock);
+    });
+    return PORTFOLIO_CATEGORIES.map(category => ({
+        category,
+        stocks: grouped[category]?.sort((a,b) => a.name.localeCompare(b.name)) || []
+    })).filter(g => g.stocks.length > 0);
+  }, [stocks]);
+
+  const [openStockCategories, setOpenStockCategories] = useState<Set<string>>(new Set());
+
+  const toggleStockCategory = (category: string) => {
+    setOpenStockCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(category)) {
+        newSet.delete(category);
+      } else {
+        newSet.add(category);
+      }
+      return newSet;
+    });
+  };
+
+  const portfolioStocksByCategory = useMemo(() => {
+    const grouped: { [key: string]: Stock[] } = {};
+    portfolioStocks.forEach(stock => {
+      if (!grouped[stock.category]) {
+        grouped[stock.category] = [];
+      }
+      grouped[stock.category].push(stock);
+    });
+    return Object.entries(grouped).map(([category, stocks]) => ({
+      category,
+      stocks: stocks.sort((a, b) => a.name.localeCompare(b.name))
+    }));
+  }, [portfolioStocks]);
+  
+  const basicInfoSections = [
+    { id: 'brokers', title: '증권사 관리', icon: <BuildingOffice2Icon className="w-6 h-6 text-blue-500" /> },
+    { id: 'accounts', title: '증권계좌 관리', icon: <IdentificationIcon className="w-6 h-6 text-green-500" /> },
+    { id: 'bankAccounts', title: '은행 계좌 관리', icon: <BuildingLibraryIcon className="w-6 h-6 text-amber-500" /> },
+    { id: 'stocks', title: '주식 종목 관리', icon: <ChartBarIcon className="w-6 h-6 text-purple-500" /> },
+  ];
+
+  const portfolioSections = [
+    { id: 'portfolio', title: '포트폴리오 비중 설정 (%)', icon: <ChartPieIcon className="w-6 h-6 text-cyan-500" /> },
+    { id: 'alertSettings', title: '리밸런싱 알림 설정', icon: <BellAlertIcon className="w-6 h-6 text-orange-500" /> },
+  ];
+
+  const appConfigSections = [
+      { id: 'appSettings', title: '앱 설정', icon: <Cog8ToothIcon className="w-6 h-6 text-slate-500" /> },
+      { id: 'data', title: '데이터 관리', icon: <CircleStackIcon className="w-6 h-6 text-rose-500" /> },
+      { id: 'password', title: '비밀번호 설정', icon: <LockClosedIcon className="w-6 h-6 text-red-500" /> },
   ];
 
   return (
-    <div className="space-y-4">
-      {sections.map(section => (
-        <SettingsSection
-          key={section.id}
-          title={section.title}
-          icon={section.icon}
-          isOpen={openSection === section.id}
-          onToggle={() => toggleSection(section.id)}
-        >
-          {section.content}
-        </SettingsSection>
-      ))}
+    <div className="space-y-8">
+        <div>
+            <h2 className="text-xl font-bold mb-4 px-2 text-light-text dark:text-dark-text">기본 정보 관리</h2>
+            <div className="space-y-4">
+                {basicInfoSections.map(section => (
+                    <SettingsSection
+                        key={section.id}
+                        title={section.title}
+                        icon={section.icon}
+                        isOpen={openSection === section.id}
+                        onToggle={() => toggleSection(section.id)}
+                    >
+                        {section.id === 'brokers' && (
+                            <>
+                              <div className="flex justify-end mb-4">
+                                <Button onClick={() => openBrokerModal(null)}>증권사 추가</Button>
+                              </div>
+                              <ul className="mt-4 space-y-2">
+                                {(brokers || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 증권사가 없습니다.</p> :
+                                  (brokers || []).map(b => (
+                                    <li key={b.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
+                                      <span>{b.name}</span>
+                                      <div className="flex gap-2">
+                                        <Button onClick={() => openBrokerModal(b)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
+                                        <Button onClick={() => handleDeleteBroker(b.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
+                                      </div>
+                                    </li>
+                                  ))
+                                }
+                              </ul>
+                            </>
+                        )}
+                        {section.id === 'accounts' && (
+                           <>
+                              <div className="flex justify-end mb-4">
+                                <Button onClick={() => openAccountModal(null)}>계좌 추가</Button>
+                              </div>
+                              <ul className="mt-4 space-y-2">
+                                {(accounts || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 계좌가 없습니다.</p> :
+                                  (accounts || []).map(a => (
+                                    <li key={a.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
+                                      <span>{a.name} <span className="text-sm text-light-secondary dark:text-dark-secondary">({brokerMap.get(a.brokerId) || '알 수 없는 증권사'})</span></span>
+                                      <div className="flex gap-2">
+                                        <Button onClick={() => openAccountModal(a)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
+                                        <Button onClick={() => handleDeleteAccount(a.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
+                                      </div>
+                                    </li>
+                                  ))
+                                }
+                              </ul>
+                            </>
+                        )}
+                        {section.id === 'bankAccounts' && (
+                            <>
+                              <div className="flex justify-end mb-4">
+                                  <Button onClick={() => openBankAccountModal(null)}>은행 계좌 추가</Button>
+                              </div>
+                              <ul className="mt-4 space-y-2">
+                              {(bankAccounts || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 은행 계좌가 없습니다.</p> :
+                                (bankAccounts || []).map(a => (
+                                  <li key={a.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
+                                    <span>{a.name} <span className="text-sm text-light-secondary dark:text-dark-secondary">({a.bankName})</span></span>
+                                    <div className="flex gap-2">
+                                      <Button onClick={() => openBankAccountModal(a)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
+                                      <Button onClick={() => handleDeleteBankAccount(a.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
+                                    </div>
+                                  </li>
+                                ))
+                              }
+                              </ul>
+                            </>
+                        )}
+                        {section.id === 'stocks' && (
+                             <>
+                              <div className="flex justify-end mb-4">
+                                <Button onClick={() => openStockModal(null)}>종목 추가</Button>
+                              </div>
+                              {(stocks || []).length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 종목이 없습니다.</p> :
+                                stocksByCategory.map(({ category, stocks: categoryStocks }) => (
+                                  <div key={category} className="mb-2">
+                                    <div
+                                      className="flex justify-between items-center p-2 rounded cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800/50"
+                                      onClick={() => toggleStockCategory(category)}
+                                    >
+                                      <h3 className="font-semibold">{category} <span className="text-sm font-normal text-light-secondary dark:text-dark-secondary">({categoryStocks.length})</span></h3>
+                                      {openStockCategories.has(category) ? <ChevronUpIcon className="w-5 h-5"/> : <ChevronDownIcon className="w-5 h-5"/>}
+                                    </div>
+                                    {openStockCategories.has(category) && (
+                                      <ul className="mt-2 space-y-2 pl-4 border-l-2 border-gray-200 dark:border-slate-700">
+                                        {categoryStocks.map(s => (
+                                          <li key={s.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
+                                            <div>
+                                              <p>{s.name} ({s.ticker})</p>
+                                              <div className="flex items-center gap-2 mt-1">
+                                                {s.isPortfolio && <span className="text-xs font-semibold text-white bg-light-primary dark:bg-dark-primary px-2 py-0.5 rounded-full">포트폴리오</span>}
+                                                {s.isEtf && <span className="text-xs font-semibold text-gray-800 dark:text-gray-200 bg-gray-300 dark:bg-gray-600 px-2 py-0.5 rounded-full">ETF</span>}
+                                              </div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <Button onClick={() => openStockModal(s)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
+                                                <Button onClick={() => handleDeleteStock(s.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
+                                            </div>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                ))
+                              }
+                            </>
+                        )}
+                    </SettingsSection>
+                ))}
+            </div>
+        </div>
+
+        <div>
+            <h2 className="text-xl font-bold mb-4 px-2 text-light-text dark:text-dark-text">포트폴리오 설정</h2>
+            <div className="space-y-4">
+                 {portfolioSections.map(section => (
+                    <SettingsSection
+                        key={section.id}
+                        title={section.title}
+                        icon={section.icon}
+                        isOpen={openSection === section.id}
+                        onToggle={() => toggleSection(section.id)}
+                    >
+                        {section.id === 'portfolio' && (
+                           <>
+                              {PORTFOLIO_CATEGORIES.map((category: string) => {
+                                const categoryStocks = portfolioStocks.filter(s => s.category === category);
+                                if (categoryStocks.length === 0) return null;
+                                
+                                const categoryTotal = categoryStocks.reduce((sum, stock) => {
+                                  const valueStr = isPortfolioEditing ? editingPortfolio[stock.id] : String((initialPortfolio || {})[stock.id] || '');
+                                  return sum + (parseFloat(valueStr) || 0);
+                                }, 0);
+                                
+                                const isCategoryOpen = openPortfolioCategories.has(category);
+
+                                return (
+                                  <div key={category} className="mb-4 last:mb-0">
+                                    <div 
+                                      onClick={() => togglePortfolioCategory(category)}
+                                      className="cursor-pointer flex justify-between items-center p-2 rounded hover:bg-gray-100 dark:hover:bg-slate-800/50 transition-colors"
+                                      aria-expanded={isCategoryOpen}
+                                      aria-controls={`portfolio-category-${category}`}
+                                    >
+                                      <h3 className="text-lg font-semibold text-light-text dark:text-dark-text">
+                                        {category}
+                                      </h3>
+                                      <div className="flex items-center gap-4">
+                                        <span className={`text-base font-bold ${isPortfolioEditing ? 'text-light-primary dark:text-dark-primary' : 'text-light-text dark:text-dark-text'}`}>{categoryTotal.toFixed(2)}%</span>
+                                        {isCategoryOpen 
+                                          ? <ChevronUpIcon className="w-5 h-5 text-light-secondary dark:text-dark-secondary" /> 
+                                          : <ChevronDownIcon className="w-5 h-5 text-light-secondary dark:text-dark-secondary" />}
+                                      </div>
+                                    </div>
+                                    {isCategoryOpen && (
+                                      <div id={`portfolio-category-${category}`} className="mt-3 space-y-4 pl-4 pr-2 pb-2 border-l-2 border-gray-200 dark:border-slate-700">
+                                        {categoryStocks.map(stock => (
+                                          <Input 
+                                            key={stock.id}
+                                            label={`${stock.name} (${stock.ticker})`}
+                                            id={`portfolio-${stock.id}`}
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={
+                                              isPortfolioEditing
+                                                ? editingPortfolio[stock.id] ?? ''
+                                                : ((initialPortfolio || {})[stock.id] ? String((initialPortfolio || {})[stock.id]) : '')
+                                            }
+                                            onChange={(e) => handlePortfolioInputChange(stock.id, e.target.value)}
+                                            disabled={!isPortfolioEditing}
+                                            placeholder="비중(%)"
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                              
+                              {portfolioStocks.length === 0 ? (
+                                <p className="text-center text-sm text-light-secondary dark:text-dark-secondary py-4">포트폴리오에 포함된 종목이 없습니다. '주식 종목 관리'에서 종목을 추가하고 '포트폴리오 포함'을 체크해주세요.</p>
+                              ) : (
+                                <>
+                                  <p className="text-sm mt-4 text-light-secondary dark:text-dark-secondary">총 합이 100%가 되도록 설정해주세요.</p>
+                                  {isPortfolioEditing && (() => {
+                                      let total = 0;
+                                      portfolioStocks.forEach(stock => {
+                                        total += parseFloat(editingPortfolio[stock.id] || '0') || 0;
+                                      });
+                                      return (
+                                        <p className="text-md mt-2 font-semibold text-right">
+                                          현재 총 합: {total.toFixed(2)}%
+                                        </p>
+                                      );
+                                  })()}
+                                </>
+                              )}
+                              
+                              <div className="flex justify-end mt-4 gap-2">
+                                {isPortfolioEditing ? (
+                                  <>
+                                    <Button onClick={handleSavePortfolio}>저장</Button>
+                                    <Button onClick={handleCancelPortfolioEdit} variant="secondary">취소</Button>
+                                  </>
+                                ) : (
+                                  <Button onClick={handleEditPortfolio} disabled={portfolioStocks.length === 0}>변경</Button>
+                                )}
+                              </div>
+                            </>
+                        )}
+                        {section.id === 'alertSettings' && (
+                             <div className="space-y-6">
+                              <div>
+                                <h3 className="text-md font-semibold mb-2">전체 기준 (%)</h3>
+                                <p className="text-sm text-light-secondary dark:text-dark-secondary mb-2">
+                                    개별 종목에 설정된 기준이 없으면 이 기준이 적용됩니다.
+                                </p>
+                                <div className="grid grid-cols-2 gap-4 p-3 bg-gray-50 dark:bg-slate-900/50 rounded-lg">
+                                  <Input label="주의 (Caution)" type="number" step="0.1"
+                                         value={editingThresholds.global.caution}
+                                         onChange={(e) => handleThresholdChange('global', 'caution', e.target.value)} />
+                                  <Input label="경고 (Warning)" type="number" step="0.1"
+                                         value={editingThresholds.global.warning}
+                                         onChange={(e) => handleThresholdChange('global', 'warning', e.target.value)} />
+                                </div>
+                              </div>
+                              <div>
+                                <h3 className="text-md font-semibold mb-2">개별 종목 기준 (선택 사항)</h3>
+                                <p className="text-sm text-light-secondary dark:text-dark-secondary mb-2">
+                                    포트폴리오에 포함된 종목별로 알림 기준을 다르게 설정할 수 있습니다. 비워두면 전체 기준을 따릅니다.
+                                </p>
+                                <div className="space-y-3">
+                                  {portfolioStocksByCategory.length === 0 ? <p className="text-center text-sm text-light-secondary dark:text-dark-secondary p-4">포트폴리오에 포함된 종목이 없습니다.</p> :
+                                    portfolioStocksByCategory.map(({ category, stocks: categoryStocks }) => (
+                                      <details key={category} className="p-3 bg-gray-50 dark:bg-slate-900/50 rounded-lg" open>
+                                          <summary className="font-medium cursor-pointer">{category}</summary>
+                                          <div className="mt-4 space-y-4 pl-2 border-l-2 border-gray-200 dark:border-slate-700">
+                                              {categoryStocks.map(stock => (
+                                                  <div key={stock.id} className="ml-2">
+                                                      <h4 className="font-semibold text-sm mb-2">{stock.name}</h4>
+                                                      <div className="grid grid-cols-2 gap-4">
+                                                          <Input label="주의 (%)" type="number" step="0.1"
+                                                              placeholder={`기본: ${editingThresholds.global.caution}%`}
+                                                              value={editingThresholds.stocks[stock.id]?.caution ?? ''}
+                                                              onChange={(e) => handleThresholdChange('stocks', 'caution', e.target.value, stock.id)} />
+                                                          <Input label="경고 (%)" type="number" step="0.1"
+                                                              placeholder={`기본: ${editingThresholds.global.warning}%`}
+                                                              value={editingThresholds.stocks[stock.id]?.warning ?? ''}
+                                                              onChange={(e) => handleThresholdChange('stocks', 'warning', e.target.value, stock.id)} />
+                                                      </div>
+                                                  </div>
+                                              ))}
+                                          </div>
+                                      </details>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="flex justify-end mt-4">
+                                <Button onClick={handleSaveThresholds}>알림 기준 저장</Button>
+                              </div>
+                            </div>
+                        )}
+                    </SettingsSection>
+                ))}
+            </div>
+        </div>
+        
+        <div>
+            <h2 className="text-xl font-bold mb-4 px-2 text-light-text dark:text-dark-text">
+                앱 환경설정 <span className="text-sm font-normal text-light-secondary dark:text-dark-secondary">{appVersion}</span>
+            </h2>
+            <div className="space-y-4">
+                {appConfigSections.map(section => (
+                    <SettingsSection
+                        key={section.id}
+                        title={section.title}
+                        icon={section.icon}
+                        isOpen={openSection === section.id}
+                        onToggle={() => toggleSection(section.id)}
+                    >
+                        {section.id === 'appSettings' && (
+                             <div className="space-y-4">
+                              <div>
+                                <p className="text-sm text-light-secondary dark:text-dark-secondary">
+                                  앱이 백그라운드(비활성) 상태일 때 시세를 가져오는 주기를 설정합니다. 
+                                  주기가 짧을수록 배터리 소모가 늘어날 수 있습니다. (앱 활성 시에는 5분으로 고정)
+                                </p>
+                                <div className="flex items-end gap-4 mt-2">
+                                  <div className="flex-grow">
+                                    <Input
+                                      label="백그라운드 조회 주기 (분)"
+                                      id="backgroundInterval"
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={localBackgroundInterval}
+                                      onChange={handleBackgroundIntervalChange}
+                                    />
+                                  </div>
+                                  <Button onClick={handleSaveBackgroundInterval}>
+                                    저장
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="pt-4 mt-4 border-t border-gray-200/50 dark:border-slate-700/50">
+                                <div className="flex justify-between items-center">
+                                  <div>
+                                    <h4 className="font-semibold text-light-text dark:text-dark-text">홈 화면 요약 정보 표시</h4>
+                                    <p className="text-sm text-light-secondary dark:text-dark-secondary">
+                                      총 자산, 누적 순입금액, 누적 수익을 홈 화면에 표시합니다.
+                                    </p>
+                                  </div>
+                                  <label htmlFor="show-summary-toggle" className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="show-summary-toggle" className="sr-only peer" checked={showSummary} onChange={() => setShowSummary(p => !p)} />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                  </label>
+                                </div>
+                              </div>
+                            </div>
+                        )}
+                        {section.id === 'data' && (
+                             <>
+                              <div className="flex flex-wrap gap-4">
+                                <Button onClick={handleImportClick} variant="secondary">엑셀에서 불러오기</Button>
+                                <Button onClick={handleExportAllData} variant="secondary">전체 데이터 엑셀로 내보내기</Button>
+                                 <input
+                                    type="file"
+                                    ref={importFileInputRef}
+                                    onChange={handleImportFileChange}
+                                    accept=".xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    className="hidden"
+                                />
+                              </div>
+                              <p className="text-sm mt-4 text-light-secondary dark:text-dark-secondary">
+                                  모든 데이터를 하나의 엑셀 파일로 내보내거나, 템플릿에 맞는 엑셀 파일의 데이터를 앱으로 가져올 수 있습니다.
+                              </p>
+                            </>
+                        )}
+                        {section.id === 'password' && (
+                             <div className="space-y-4">
+                              <Input label="새 비밀번호" id="newPassword" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                              <Input label="비밀번호 확인" id="confirmPassword" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
+                              <Button onClick={handlePasswordSet}>{password ? '비밀번호 변경' : '비밀번호 설정'}</Button>
+                            </div>
+                        )}
+                    </SettingsSection>
+                ))}
+            </div>
+        </div>
+      
 
       {toastMessage && (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-gray-200 text-white dark:text-black px-4 py-2 rounded-full shadow-lg text-sm" role="status">
@@ -1181,19 +1413,37 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           <Select label="카테고리" id="stockCategoryModal" name="category" value={stockForm.category} onChange={handleStockFormChange} required>
             {PORTFOLIO_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </Select>
-          <div className="flex items-center pt-2">
-            <input
-                id="isPortfolioModal"
-                name="isPortfolio"
-                type="checkbox"
-                checked={stockForm.isPortfolio}
-                onChange={handleStockFormChange}
-                className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-light-primary focus:ring-light-primary bg-gray-100 dark:bg-gray-700"
-            />
-            <label htmlFor="isPortfolioModal" className="ml-3 block text-sm font-medium">
-                포트폴리오 포함
-            </label>
+          <div className="flex items-center pt-2 gap-6">
+            <div className="flex items-center">
+              <input
+                  id="isPortfolioModal"
+                  name="isPortfolio"
+                  type="checkbox"
+                  checked={stockForm.isPortfolio}
+                  onChange={handleStockFormChange}
+                  className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-light-primary focus:ring-light-primary bg-gray-100 dark:bg-gray-700"
+              />
+              <label htmlFor="isPortfolioModal" className="ml-3 block text-sm font-medium">
+                  포트폴리오 포함
+              </label>
+            </div>
+            <div className="flex items-center">
+              <input
+                  id="isEtfModal"
+                  name="isEtf"
+                  type="checkbox"
+                  checked={stockForm.isEtf}
+                  onChange={handleStockFormChange}
+                  className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-light-primary focus:ring-light-primary bg-gray-100 dark:bg-gray-700"
+              />
+              <label htmlFor="isEtfModal" className="ml-3 block text-sm font-medium">
+                  ETF
+              </label>
+            </div>
           </div>
+          {stockForm.isEtf && (
+            <Input label="실부담비용률 (%)" id="expenseRatioModal" name="expenseRatio" type="text" inputMode="decimal" value={stockForm.expenseRatio} onChange={handleStockFormChange} placeholder="예: 0.05" />
+          )}
           <div className="flex justify-end pt-4">
               <Button type="submit">저장</Button>
           </div>

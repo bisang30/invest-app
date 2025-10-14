@@ -1,6 +1,7 @@
 
+
 import * as XLSX from 'xlsx';
-import { Broker, Account, BankAccount, Stock, InitialPortfolio, Trade, TradeType, AccountTransaction, TransactionType, MonthlyAccountValue, HistoricalGain } from '../types';
+import { Broker, Account, BankAccount, Stock, InitialPortfolio, Trade, TradeType, AccountTransaction, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds } from '../types';
 
 
 /**
@@ -94,6 +95,9 @@ export const exportAllData = (
   transactions: AccountTransaction[],
   monthlyValues: MonthlyAccountValue[],
   historicalGains: HistoricalGain[],
+  alertThresholds: AlertThresholds,
+  backgroundFetchInterval: number,
+  showSummary: boolean,
   fileName: string
 ) => {
     const sheets: { name: string, data: any[] }[] = [];
@@ -104,7 +108,14 @@ export const exportAllData = (
     sheets.push({ name: '증권사', data: (brokers || []).map(b => ({ '증권사명': b.name })) });
     sheets.push({ name: '증권계좌', data: (accounts || []).map(a => ({ '계좌명': a.name, '증권사': brokerMap.get(a.brokerId) || 'N/A' })) });
     sheets.push({ name: '은행계좌', data: (bankAccounts || []).map(b => ({ '은행명': b.bankName, '계좌별명': b.name })) });
-    sheets.push({ name: '종목', data: (stocks || []).map(s => ({ '종목명': s.name, '티커': s.ticker, '카테고리': s.category, '포트폴리오 포함': s.isPortfolio ? '예' : '아니오' })) });
+    sheets.push({ name: '종목', data: (stocks || []).map(s => ({ 
+        '종목명': s.name, 
+        '티커': s.ticker, 
+        '카테고리': s.category, 
+        '포트폴리오 포함': s.isPortfolio ? '예' : '아니오',
+        'ETF 여부': s.isEtf ? '예' : '아니오',
+        '실부담비용률 (%)': s.isEtf ? s.expenseRatio : ''
+    })) });
     sheets.push({ name: '포트폴리오', data: portfolioStocks.map(s => ({ '종목명': s.name, '티커': s.ticker, '카테고리': s.category, '목표 비중 (%)': initialPortfolio[s.id] || 0 })) });
     
     const stockMap = new Map<string, Stock>((stocks || []).map(s => [s.id, s]));
@@ -161,6 +172,40 @@ export const exportAllData = (
     }
     
     sheets.push({ name: '실현손익', data: realizedGainsData.sort((a, b) => b.realizedPnl - a.realizedPnl).map(item => ({ '종목명': item.stockName, '총 매수금액': item.totalBuyCost, '총 매도금액': item.totalSellProceeds, '실현손익': item.realizedPnl, '수익률 (%)': item.pnlRate })) });
+    
+    const stockInfoMap = new Map((stocks || []).map(s => [s.id, { ticker: s.ticker, name: s.name }]));
+    const alertThresholdsData = [];
+    if (alertThresholds?.global) {
+        alertThresholdsData.push({
+            '구분': '전체',
+            '종목명': '',
+            'ID(티커)': '',
+            '주의 기준 (%)': alertThresholds.global.caution,
+            '경고 기준 (%)': alertThresholds.global.warning,
+        });
+    }
+    if (alertThresholds?.stocks) {
+        for (const stockId in alertThresholds.stocks) {
+            const thresholds = alertThresholds.stocks[stockId];
+            if (thresholds && (thresholds.caution !== undefined || thresholds.warning !== undefined)) {
+                const stockInfo = stockInfoMap.get(stockId);
+                alertThresholdsData.push({
+                    '구분': '개별 종목',
+                    '종목명': stockInfo?.name || '알 수 없는 종목',
+                    'ID(티커)': stockInfo?.ticker || `ID:${stockId}`,
+                    '주의 기준 (%)': thresholds.caution,
+                    '경고 기준 (%)': thresholds.warning,
+                });
+            }
+        }
+    }
+    sheets.push({ name: '리밸런싱알림설정', data: alertThresholdsData });
+    
+    const appSettingsData = [
+        { '설정명': '백그라운드 조회 주기 (분)', '설정값': backgroundFetchInterval },
+        { '설정명': '홈 화면 요약 정보 표시', '설정값': showSummary ? '예' : '아니오' }
+    ];
+    sheets.push({ name: '앱설정', data: appSettingsData });
     
     if (sheets.length > 0) {
         exportToExcel(sheets, fileName);

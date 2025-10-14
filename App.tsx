@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Screen, Theme, TradeType, Account, Broker, Stock, Trade, AccountTransaction, BankAccount, InitialPortfolio, MonthlyAccountValue, PortfolioCategory, HistoricalGain } from './types';
+import { Screen, Theme, TradeType, Account, Broker, Stock, Trade, AccountTransaction, BankAccount, InitialPortfolio, MonthlyAccountValue, PortfolioCategory, HistoricalGain, AlertThresholds } from './types';
 import HomeScreen from './screens/HomeScreen';
 import StockStatusScreen from './screens/StockStatusScreen';
 import AccountStatusScreen from './screens/AccountStatusScreen';
@@ -66,6 +66,12 @@ const DEFAULT_INITIAL_PORTFOLIO: InitialPortfolio = {
   'stock-283580': 9.38,
 };
 
+const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
+  global: { caution: 3, warning: 5 },
+  categories: {},
+  stocks: {}
+};
+
 interface AppProps {
   onForceRemount: () => void;
 }
@@ -77,6 +83,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   const [currentScreen, setCurrentScreen] = useState<Screen>(Screen.Home);
   const [isDataOperationInProgress, setIsDataOperationInProgress] = useState(false);
   const [isExitModalOpen, setIsExitModalOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
 
   // All application data is stored here, managed by useLocalStorage
   const [brokers, setBrokers] = useLocalStorage<Broker[]>('brokers', DEFAULT_BROKERS);
@@ -91,6 +98,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   const [backgroundFetchInterval, setBackgroundFetchInterval] = useLocalStorage<number>('backgroundFetchInterval', 30); // in minutes
   const [showSummary, setShowSummary] = useLocalStorage<boolean>('showSummary', true);
   const [historicalGains, setHistoricalGains] = useLocalStorage<HistoricalGain[]>('historicalGains', []);
+  const [alertThresholds, setAlertThresholds] = useLocalStorage<AlertThresholds>('alertThresholds', DEFAULT_ALERT_THRESHOLDS);
 
   // New state and refs for swipe and animation
   const [animationClass, setAnimationClass] = useState('');
@@ -106,6 +114,20 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   ], []);
 
   const screenIndexRef = useRef(swipeNavOrder.findIndex(s => s === currentScreen));
+  
+  useEffect(() => {
+    fetch('/metadata.json')
+        .then(response => response.json())
+        .then(data => {
+            if (data?.name) {
+                const versionMatch = data.name.match(/V\d+\.\d+\.\d+/);
+                if (versionMatch) {
+                    setAppVersion(versionMatch[0]);
+                }
+            }
+        })
+        .catch(error => console.error("Failed to load app version:", error));
+  }, []);
   
   const navigateToScreen = useCallback((newScreen: Screen) => {
       const newIndex = swipeNavOrder.findIndex(s => s === newScreen);
@@ -331,6 +353,9 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             transactions,
             monthlyValues,
             historicalGains,
+            alertThresholds,
+            backgroundFetchInterval,
+            showSummary,
             `투자 관리 앱 전체 데이터_${new Date().toISOString().split('T')[0]}`
         );
     }
@@ -354,6 +379,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           monthlyValues={monthlyValues}
           showSummary={showSummary}
           historicalGains={historicalGains}
+          alertThresholds={alertThresholds}
         />;
       case Screen.StockStatus:
         return <StockStatusScreen 
@@ -403,6 +429,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         />;
       case Screen.Index:
         return <IndexScreen 
+            appVersion={appVersion}
             brokers={brokers} setBrokers={setBrokers}
             accounts={accounts} setAccounts={setAccounts}
             bankAccounts={bankAccounts} setBankAccounts={setBankAccounts}
@@ -419,6 +446,8 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             setBackgroundFetchInterval={setBackgroundFetchInterval}
             showSummary={showSummary}
             setShowSummary={setShowSummary}
+            alertThresholds={alertThresholds}
+            setAlertThresholds={setAlertThresholds}
           />;
       default:
         return <HomeScreen 
@@ -432,6 +461,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           monthlyValues={monthlyValues}
           showSummary={showSummary}
           historicalGains={historicalGains}
+          alertThresholds={alertThresholds}
         />;
     }
   };
