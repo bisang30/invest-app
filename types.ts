@@ -16,6 +16,7 @@ export const Screen = {
   Index: 'INDEX',
   ProfitManagement: 'PROFIT_MANAGEMENT',
   MonthlyHistory: 'MONTHLY_HISTORY',
+  Rebalancing: 'REBALANCING',
 } as const;
 export type Screen = typeof Screen[keyof typeof Screen];
 

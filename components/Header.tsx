@@ -18,6 +18,7 @@ const screenTitles: Record<Screen, string> = {
   [Screen.ProfitManagement]: '수익 관리',
   [Screen.MonthlyHistory]: '월말 결산',
   [Screen.Index]: '설정',
+  [Screen.Rebalancing]: '포트폴리오 리밸런싱',
 };
 
 const Header: React.FC<HeaderProps> = ({ theme, toggleTheme, currentScreen, onOpenExitModal }) => {

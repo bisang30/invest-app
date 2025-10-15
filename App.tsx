@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Screen, Theme, TradeType, Account, Broker, Stock, Trade, AccountTransaction, BankAccount, InitialPortfolio, MonthlyAccountValue, PortfolioCategory, HistoricalGain, AlertThresholds } from './types';
+import { Screen, Theme, TradeType, Account, Broker, Stock, Trade, AccountTransaction, BankAccount, InitialPortfolio, MonthlyAccountValue, PortfolioCategory, HistoricalGain, AlertThresholds, TransactionType } from './types';
 import HomeScreen from './screens/HomeScreen';
 import StockStatusScreen from './screens/StockStatusScreen';
 import AccountStatusScreen from './screens/AccountStatusScreen';
@@ -9,6 +9,7 @@ import AccountTransactionsScreen from './screens/AccountTransactionsScreen';
 import ProfitManagementScreen from './screens/ProfitManagementScreen';
 import MonthlyHistoryScreen from './screens/MonthlyHistoryScreen';
 import IndexScreen from './screens/IndexScreen';
+import RebalancingScreen from './screens/RebalancingScreen';
 import PasswordScreen from './screens/PasswordScreen';
 import BottomNav from './components/BottomNav';
 import Header from './components/Header';
@@ -17,6 +18,7 @@ import Button from './components/ui/Button';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { fetchStockPrices } from './services/stockPriceService';
 import { exportAllData } from './services/exportService';
+import { PORTFOLIO_CATEGORIES } from './constants';
 
 // Default Data for initial setup
 const defaultBrokerId = 'broker-mirae';
@@ -76,6 +78,123 @@ interface AppProps {
   onForceRemount: () => void;
 }
 
+const calculateXIRR = (cashflows: { amount: number; date: Date }[]): number => {
+    if (cashflows.length < 2) return 0;
+    
+    const hasPositive = cashflows.some(cf => cf.amount > 0);
+    const hasNegative = cashflows.some(cf => cf.amount < 0);
+    if (!hasPositive || !hasNegative) return 0;
+
+    cashflows.sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    const calculateNPV = (rate: number): number => {
+        let npv = 0;
+        const firstDate = cashflows[0].date;
+        for (const cf of cashflows) {
+            const daysDiff = (cf.date.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24);
+            const yearsDiff = daysDiff / 365.25;
+            npv += cf.amount / Math.pow(1 + rate, yearsDiff);
+        }
+        return npv;
+    };
+
+    const MAX_ITERATIONS = 100;
+    const PRECISION = 1e-7;
+    let low = -0.99; // -99%
+    let high = 10.0; // 1000%
+    let mid = 0;
+
+    const npvLow = calculateNPV(low);
+    const npvHigh = calculateNPV(high);
+
+    if (npvLow * npvHigh > 0) {
+        return 0;
+    }
+
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+        mid = (low + high) / 2;
+        const npvMid = calculateNPV(mid);
+        
+        if (Math.abs(npvMid) < PRECISION) {
+            return mid * 100; // Return as percentage
+        }
+
+        if (npvLow * npvMid < 0) {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+
+    return mid * 100;
+};
+
+const calculateTWRR = (monthlyValues: MonthlyAccountValue[], transactions: AccountTransaction[], securityAccountIds: Set<string>): number => {
+    if (!monthlyValues || monthlyValues.length < 2) {
+        return 0;
+    }
+    const sortedValues = [...monthlyValues].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const firstValuationDate = new Date(sortedValues[0].date);
+    const firstPeriodNetCashFlow = (transactions || [])
+        .filter(t => {
+            if (new Date(t.date) > firstValuationDate) return false;
+            if (t.transactionType === TransactionType.Dividend) return false;
+            if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false;
+            return true;
+        })
+        .reduce((acc, t) => {
+            const amount = Number(t.amount) || 0;
+            return t.transactionType === TransactionType.Deposit ? acc + amount : acc - amount;
+        }, 0);
+    
+    let subPeriodReturns: number[] = [];
+    if (firstPeriodNetCashFlow > 0) {
+        const endValue = sortedValues[0].totalValue;
+        const hpr = (endValue - firstPeriodNetCashFlow) / firstPeriodNetCashFlow;
+        subPeriodReturns.push(1 + hpr);
+    }
+
+    for (let i = 1; i < sortedValues.length; i++) {
+        const prevValuation = sortedValues[i - 1];
+        const currentValuation = sortedValues[i];
+        const prevDate = new Date(prevValuation.date);
+        const currentDate = new Date(currentValuation.date);
+        const periodNetCashFlow = (transactions || [])
+            .filter(t => {
+                const txDate = new Date(t.date);
+                if (txDate <= prevDate || txDate > currentDate) return false;
+                if (t.transactionType === TransactionType.Dividend) return false;
+                if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false;
+                return true;
+            })
+            .reduce((acc, t) => {
+                const amount = Number(t.amount) || 0;
+                return t.transactionType === TransactionType.Deposit ? acc + amount : acc - amount;
+            }, 0);
+        const startValue = prevValuation.totalValue;
+        const endValue = currentValuation.totalValue;
+        if (startValue > 0) {
+            const hpr = (endValue - startValue - periodNetCashFlow) / startValue;
+            subPeriodReturns.push(1 + hpr);
+        }
+    }
+
+    if (subPeriodReturns.length === 0) return 0;
+    const compoundedReturn = subPeriodReturns.reduce((acc, r) => acc * r, 1);
+    const allRelevantDates = (transactions || []).length > 0
+      ? transactions.map(t => new Date(t.date))
+      : [new Date()];
+    const startDate = new Date(Math.min(...allRelevantDates.map(d => d.getTime())));
+    const lastDate = new Date(sortedValues[sortedValues.length - 1].date);
+    const totalDays = (lastDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+    if (totalDays <= 0) return 0;
+    const periodInYears = totalDays / 365.25;
+    if (compoundedReturn < 0) return -100.0;
+    const annualizedTwrr = Math.pow(compoundedReturn, 1 / periodInYears) - 1;
+    return annualizedTwrr * 100;
+};
+
+
 const App: React.FC<AppProps> = ({ onForceRemount }) => {
   const [theme, setTheme] = useLocalStorage<Theme>('theme', Theme.Light);
   const [password, setPassword] = useLocalStorage<string | null>('app-password', '9635');
@@ -84,8 +203,8 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   const [isDataOperationInProgress, setIsDataOperationInProgress] = useState(false);
   const [isExitModalOpen, setIsExitModalOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
+  const [rebalancingStockId, setRebalancingStockId] = useState<string | null>(null);
 
-  // All application data is stored here, managed by useLocalStorage
   const [brokers, setBrokers] = useLocalStorage<Broker[]>('brokers', DEFAULT_BROKERS);
   const [accounts, setAccounts] = useLocalStorage<Account[]>('accounts', DEFAULT_ACCOUNTS);
   const [stocks, setStocks] = useLocalStorage<Stock[]>('stocks', DEFAULT_STOCKS);
@@ -95,12 +214,11 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   const [initialPortfolio, setInitialPortfolio] = useLocalStorage<InitialPortfolio>('initialPortfolio', DEFAULT_INITIAL_PORTFOLIO);
   const [monthlyValues, setMonthlyValues] = useLocalStorage<MonthlyAccountValue[]>('monthlyValues', []);
   const [stockPrices, setStockPrices] = useLocalStorage<{ [key: string]: number }>('stockPrices', {});
-  const [backgroundFetchInterval, setBackgroundFetchInterval] = useLocalStorage<number>('backgroundFetchInterval', 30); // in minutes
+  const [backgroundFetchInterval, setBackgroundFetchInterval] = useLocalStorage<number>('backgroundFetchInterval', 30);
   const [showSummary, setShowSummary] = useLocalStorage<boolean>('showSummary', true);
   const [historicalGains, setHistoricalGains] = useLocalStorage<HistoricalGain[]>('historicalGains', []);
   const [alertThresholds, setAlertThresholds] = useLocalStorage<AlertThresholds>('alertThresholds', DEFAULT_ALERT_THRESHOLDS);
 
-  // New state and refs for swipe and animation
   const [animationClass, setAnimationClass] = useState('');
 
   const swipeNavOrder = useMemo(() => [
@@ -114,6 +232,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   ], []);
 
   const screenIndexRef = useRef(swipeNavOrder.findIndex(s => s === currentScreen));
+  const notifiedWarningsRef = useRef(new Set<string>());
   
   useEffect(() => {
     fetch('/metadata.json')
@@ -130,6 +249,9 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   }, []);
   
   const navigateToScreen = useCallback((newScreen: Screen) => {
+      if (rebalancingStockId) {
+        setRebalancingStockId(null);
+      }
       const newIndex = swipeNavOrder.findIndex(s => s === newScreen);
       const oldIndex = screenIndexRef.current;
       
@@ -145,17 +267,25 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
       
       screenIndexRef.current = newIndex;
       setCurrentScreen(newScreen);
-  }, [swipeNavOrder]);
+  }, [swipeNavOrder, rebalancingStockId]);
 
-  const SWIPE_THRESHOLD = 50;
+  const navigateToRebalancing = useCallback((stockId: string) => {
+    setRebalancingStockId(stockId);
+    setAnimationClass('slide-in-from-right');
+    screenIndexRef.current = -1;
+    setCurrentScreen(Screen.Rebalancing);
+  }, []);
+
+  const SWIPE_THRESHOLD = 80;
   const touchStartX = useRef<number | null>(null);
 
   const handleTouchStart = (e: React.TouchEvent) => {
+      if (currentScreen === Screen.Rebalancing) return;
       touchStartX.current = e.targetTouches[0].clientX;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-      if (!touchStartX.current) return;
+      if (currentScreen === Screen.Rebalancing || !touchStartX.current) return;
       
       const touchEndX = e.changedTouches[0].clientX;
       const distance = touchStartX.current - touchEndX;
@@ -167,9 +297,9 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           if (currentIndex === -1) return;
 
           let nextIndex;
-          if (isLeftSwipe) { // Swipe left, go to next screen
+          if (isLeftSwipe) {
               nextIndex = currentIndex + 1;
-          } else { // Swipe right, go to previous screen
+          } else {
               nextIndex = currentIndex - 1;
           }
 
@@ -177,7 +307,6 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
               navigateToScreen(swipeNavOrder[nextIndex]);
           }
       }
-
       touchStartX.current = null;
   };
 
@@ -199,6 +328,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   }, [setBrokers, setAccounts, setStocks, setInitialPortfolio, setBankAccounts, setTrades, setTransactions, setMonthlyValues, setHistoricalGains]);
 
   const stockMap = useMemo(() => new Map((stocks || []).map(s => [s.id, s])), [stocks]);
+  const securityAccountIds = useMemo(() => new Set((accounts || []).map(a => a.id)), [accounts]);
 
   const tickersToFetch = useMemo(() => {
     const holdingsMap: { [stockId: string]: { quantity: number } } = {};
@@ -359,27 +489,263 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             `투자 관리 앱 전체 데이터_${new Date().toISOString().split('T')[0]}`
         );
     }
-    // After a small delay to ensure export is triggered.
     setTimeout(() => {
         document.body.innerHTML = '<div style="display:flex; justify-content:center; align-items:center; height:100vh; font-size:20px; color: #333; background-color: #f0f0f0; text-align: center; padding: 20px;">앱이 종료되었습니다.<br/>이 탭을 닫으셔도 좋습니다.</div>';
     }, 500);
   };
   
+  const totalCashBalance = useMemo(() => {
+    let totalCash = 0;
+    (accounts || []).forEach(account => {
+        const accountTrades = (trades || []).filter(t => t.accountId === account.id);
+        const totalBuyCost = accountTrades.filter(t => t.tradeType === TradeType.Buy).reduce((sum, t) => sum + (Number(t.price) || 0) * (Number(t.quantity) || 0), 0);
+        const totalSellProceeds = accountTrades.filter(t => t.tradeType === TradeType.Sell).reduce((sum, t) => sum + (Number(t.price) || 0) * (Number(t.quantity) || 0), 0);
+        let netCashFromTransactions = 0;
+        (transactions || []).forEach(t => {
+            const amount = Number(t.amount) || 0;
+            if (t.accountId === account.id && (t.transactionType === TransactionType.Deposit || t.transactionType === TransactionType.Dividend)) {
+                netCashFromTransactions += amount;
+            }
+            if (t.counterpartyAccountId === account.id && t.transactionType === TransactionType.Withdrawal) {
+                netCashFromTransactions += amount;
+            }
+            if (t.accountId === account.id && t.transactionType === TransactionType.Withdrawal) {
+                netCashFromTransactions -= amount;
+            }
+            if (t.counterpartyAccountId === account.id && t.transactionType === TransactionType.Deposit) {
+                netCashFromTransactions -= amount;
+            }
+        });
+        const historicalPnlForAccount = (historicalGains || [])
+            .filter(g => g.accountId === account.id)
+            .reduce((sum, g) => sum + (Number(g.realizedPnl) || 0), 0);
+        const cashBalance = netCashFromTransactions + totalSellProceeds - totalBuyCost + historicalPnlForAccount;
+        totalCash += cashBalance;
+    });
+    return totalCash;
+  }, [accounts, trades, transactions, historicalGains]);
+
+
+  const netExternalDeposits = useMemo(() => {
+    return (transactions || []).reduce((acc, t) => {
+        if (t.transactionType === TransactionType.Dividend) {
+            return acc;
+        }
+        if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) {
+            return acc;
+        }
+        const amount = Number(t.amount) || 0;
+        if (t.transactionType === TransactionType.Deposit) {
+            return acc + amount;
+        }
+        if (t.transactionType === TransactionType.Withdrawal) {
+            return acc - amount;
+        }
+        return acc;
+    }, 0);
+  }, [transactions, securityAccountIds]);
+  
+  const financialSummary = useMemo(() => {
+    const holdings: { [stockId: string]: { quantity: number } } = {};
+    for (const trade of (trades || [])) {
+      if (!trade || !trade.stockId) continue;
+      const quantity = Number(trade.quantity) || 0;
+      if (!holdings[trade.stockId]) holdings[trade.stockId] = { quantity: 0 };
+      if (trade.tradeType === TradeType.Buy) {
+        holdings[trade.stockId].quantity += quantity;
+      } else {
+        holdings[trade.stockId].quantity -= quantity;
+      }
+    }
+
+    let currentStockValue = 0;
+    const valueByStock: { [stockId: string]: number } = {};
+    for (const stockId in holdings) {
+        if (holdings[stockId].quantity > 0) {
+            const stock = stockMap.get(stockId);
+            const ticker = stock?.ticker;
+            const currentPrice = ticker ? stockPrices[ticker] ?? 0 : 0;
+            const value = holdings[stockId].quantity * currentPrice;
+            currentStockValue += value;
+            valueByStock[stockId] = value;
+        }
+    }
+    
+    const totalAssets = currentStockValue + totalCashBalance;
+    const profitLoss = totalAssets - netExternalDeposits;
+    const ccr = netExternalDeposits > 0 ? (profitLoss / netExternalDeposits) * 100 : 0;
+    
+    const cashFlows: { amount: number; date: Date }[] = [];
+    (transactions || []).forEach(t => {
+        if (t.transactionType === TransactionType.Dividend) return;
+        if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return;
+        const amount = Number(t.amount) || 0;
+        const date = new Date(t.date);
+        if (t.transactionType === TransactionType.Deposit) {
+            cashFlows.push({ amount: -amount, date });
+        } else if (t.transactionType === TransactionType.Withdrawal) {
+            cashFlows.push({ amount: amount, date });
+        }
+    });
+
+    if (totalAssets > 0 || cashFlows.length > 0) {
+        cashFlows.push({ amount: totalAssets, date: new Date() });
+    }
+    const mwrr = calculateXIRR(cashFlows);
+
+    const currentYear = new Date().getFullYear();
+    const startOfCurrentYear = new Date(currentYear, 0, 1);
+    const lastYearValues = (monthlyValues || [])
+        .filter(mv => new Date(mv.date).getTime() < startOfCurrentYear.getTime())
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    
+    let startOfYearAssets;
+    if (lastYearValues.length > 0) {
+        startOfYearAssets = Number(lastYearValues[0].totalValue) || 0;
+    } else {
+        startOfYearAssets = (transactions || [])
+            .filter(t => {
+                if (new Date(t.date) >= startOfCurrentYear) return false;
+                if (t.transactionType === TransactionType.Dividend) return false;
+                if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false;
+                return true;
+            })
+            .reduce((acc, t) => {
+                const amount = Number(t.amount) || 0;
+                if (t.transactionType === TransactionType.Deposit) return acc + amount;
+                if (t.transactionType === TransactionType.Withdrawal) return acc - amount;
+                return acc;
+            }, 0);
+    }
+    
+    const netInflowThisYear = (transactions || [])
+        .filter(t => {
+            if (new Date(t.date).getFullYear() !== currentYear) return false;
+            if (t.transactionType === TransactionType.Dividend) return false;
+            if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false;
+            return true;
+        })
+        .reduce((acc, t) => {
+          const amount = (Number(t.amount) || 0);
+          if (t.transactionType === TransactionType.Deposit) return acc + amount;
+          if (t.transactionType === TransactionType.Withdrawal) return acc - amount;
+          return acc;
+        }, 0);
+
+    const ytdProfit = totalAssets - startOfYearAssets - netInflowThisYear;
+    const ytdBase = startOfYearAssets + netInflowThisYear;
+    const ytd = ytdBase > 0 ? (ytdProfit / ytdBase) * 100 : 0;
+    const twrr = calculateTWRR(monthlyValues, transactions, securityAccountIds);
+    const portfolioStockIds = new Set((stocks || []).filter(s => s.isPortfolio).map(s => s.id));
+    
+    let totalPortfolioStockValue = 0;
+    for (const stockId in valueByStock) {
+        if (portfolioStockIds.has(stockId)) {
+            totalPortfolioStockValue += valueByStock[stockId];
+        }
+    }
+
+    const targetPercentagesByCategory: { [key in PortfolioCategory]?: number } = {};
+    const individualStocksWithDetails = (stocks || [])
+      .filter(stock => stock.isPortfolio)
+      .map(stock => {
+        const currentValue = valueByStock[stock.id] || 0;
+        const currentWeight = totalPortfolioStockValue > 0 ? (currentValue / totalPortfolioStockValue) * 100 : 0;
+        const targetWeight = (initialPortfolio || {})[stock.id] || 0;
+        const requiredPurchase = (totalPortfolioStockValue * (targetWeight / 100)) - currentValue;
+        
+        if (targetWeight > 0) {
+            targetPercentagesByCategory[stock.category] = (targetPercentagesByCategory[stock.category] || 0) + targetWeight;
+        }
+        
+        return {
+            ...stock,
+            currentValue,
+            currentWeight,
+            targetWeight,
+            deviation: currentWeight - targetWeight,
+            requiredPurchase,
+        };
+      }).filter(s => s.currentValue > 0 || s.targetWeight > 0);
+
+
+    const portfolioChartData = PORTFOLIO_CATEGORIES.map(category => {
+      const stocksInCategory = individualStocksWithDetails.filter(s => s.category === category);
+      const currentValue = stocksInCategory.reduce((sum, s) => sum + s.currentValue, 0);
+      const currentPercentage = totalPortfolioStockValue > 0 ? (currentValue / totalPortfolioStockValue) * 100 : 0;
+      const targetPercentage = targetPercentagesByCategory[category] || 0;
+      
+      return {
+        name: category,
+        value: currentValue,
+        percentage: currentPercentage,
+        targetPercentage: targetPercentage,
+        difference: currentPercentage - targetPercentage,
+        stocks: stocksInCategory.sort((a,b) => b.currentValue - a.currentValue),
+      };
+    }).filter(d => d.value > 0 || d.targetPercentage > 0);
+
+    return {
+      totalAssets,
+      netExternalDeposits,
+      profitLoss,
+      ccr,
+      mwrr,
+      ytd,
+      twrr,
+      chartData: portfolioChartData,
+      allStocks: individualStocksWithDetails,
+      totalPortfolioValue: totalPortfolioStockValue,
+    };
+  }, [trades, transactions, stocks, stockPrices, stockMap, initialPortfolio, totalCashBalance, netExternalDeposits, monthlyValues, securityAccountIds, accounts, historicalGains]);
+
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'granted' && financialSummary) {
+      const { allStocks } = financialSummary;
+      const { global: globalThresholds, stocks: stockThresholds } = alertThresholds;
+
+      const newWarnings: { name: string; deviation: number }[] = [];
+
+      allStocks.forEach((stock: any) => {
+        if (stock.targetWeight > 0) {
+          const stockThresh = stockThresholds[stock.id] || {};
+          const warningThreshold = stockThresh.warning ?? globalThresholds.warning;
+          const absDeviation = Math.abs(stock.deviation);
+
+          if (absDeviation > warningThreshold && !notifiedWarningsRef.current.has(stock.id)) {
+            newWarnings.push({ name: stock.name, deviation: stock.deviation });
+            notifiedWarningsRef.current.add(stock.id);
+          } else if (absDeviation <= warningThreshold && notifiedWarningsRef.current.has(stock.id)) {
+            // Clear notification status if it's back in range
+            notifiedWarningsRef.current.delete(stock.id);
+          }
+        }
+      });
+
+      if (newWarnings.length > 0) {
+        const notificationBody = newWarnings
+          .map(w => `${w.name} (${w.deviation > 0 ? '+' : ''}${w.deviation.toFixed(1)}%)`)
+          .join(', ');
+        
+        new Notification('리밸런싱 경고', {
+          body: `목표 비중을 초과한 종목이 있습니다: ${notificationBody}`,
+          icon: '/icon.svg',
+        });
+      }
+    }
+  }, [financialSummary, alertThresholds]);
+
   const renderScreen = () => {
     switch (currentScreen) {
       case Screen.Home:
         return <HomeScreen 
-          trades={trades} 
-          transactions={transactions} 
-          stocks={stocks} 
-          accounts={accounts}
-          brokers={brokers}
-          initialPortfolio={initialPortfolio} 
-          stockPrices={stockPrices}
-          monthlyValues={monthlyValues}
-          showSummary={showSummary}
-          historicalGains={historicalGains}
+          navigateToRebalancing={navigateToRebalancing}
+          financialSummary={financialSummary}
           alertThresholds={alertThresholds}
+          showSummary={showSummary}
+          monthlyValues={monthlyValues}
+          transactions={transactions}
+          accounts={accounts}
         />;
       case Screen.StockStatus:
         return <StockStatusScreen 
@@ -449,19 +815,21 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             alertThresholds={alertThresholds}
             setAlertThresholds={setAlertThresholds}
           />;
+      case Screen.Rebalancing:
+        return <RebalancingScreen
+          stockId={rebalancingStockId!}
+          setCurrentScreen={navigateToScreen}
+          financialSummary={financialSummary}
+        />;
       default:
         return <HomeScreen 
-          trades={trades} 
-          transactions={transactions} 
-          stocks={stocks} 
-          accounts={accounts} 
-          brokers={brokers}
-          initialPortfolio={initialPortfolio} 
-          stockPrices={stockPrices}
-          monthlyValues={monthlyValues}
-          showSummary={showSummary}
-          historicalGains={historicalGains}
+          navigateToRebalancing={navigateToRebalancing}
+          financialSummary={financialSummary}
           alertThresholds={alertThresholds}
+          showSummary={showSummary}
+          monthlyValues={monthlyValues}
+          transactions={transactions}
+          accounts={accounts}
         />;
     }
   };

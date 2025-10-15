@@ -6,7 +6,7 @@ import Modal from '../components/ui/Modal';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import { Account, Broker, Trade, AccountTransaction, TransactionType, Screen, BankAccount, Stock, TradeType, HistoricalGain } from '../types';
-import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, WalletIcon, IdentificationIcon } from '../components/Icons';
+import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, WalletIcon, IdentificationIcon, ChevronDownIcon, ChevronUpIcon } from '../components/Icons';
 
 
 interface AccountStatusScreenProps {
@@ -46,78 +46,89 @@ const AccountStatusScreen: React.FC<AccountStatusScreenProps> = ({
     transactionType: TransactionType.Deposit,
     counterpartyAccountId: undefined,
   });
+  
+  const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
+
+  const handleToggleExpand = (accountId: string) => {
+    setExpandedAccountId(prevId => (prevId === accountId ? null : accountId));
+  };
+
 
   const accountDetails = useMemo(() => {
     return (accounts || []).map(account => {
-      // 1. Calculate stock value and costs for this account
-      const accountTrades = (trades || []).filter(t => t.accountId === account.id);
+      const accountTrades = (trades || [])
+        .filter(t => t.accountId === account.id)
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       
-      const accountHoldings: { [stockId: string]: { quantity: number } } = {};
+      const accountHoldingsMap: { [stockId: string]: { quantity: number; totalCost: number } } = {};
       accountTrades.forEach(trade => {
-        if (!trade.stockId) return;
-        if (!accountHoldings[trade.stockId]) accountHoldings[trade.stockId] = { quantity: 0 };
-        const quantity = Number(trade.quantity) || 0;
-        if (trade.tradeType === TradeType.Buy) {
-          accountHoldings[trade.stockId].quantity += quantity;
-        } else {
-          accountHoldings[trade.stockId].quantity -= quantity;
-        }
-      });
+          if (!trade.stockId) return;
+          if (!accountHoldingsMap[trade.stockId]) {
+            accountHoldingsMap[trade.stockId] = { quantity: 0, totalCost: 0 };
+          }
+          const quantity = Number(trade.quantity) || 0;
+          const price = Number(trade.price) || 0;
 
+          if (trade.tradeType === TradeType.Buy) {
+            accountHoldingsMap[trade.stockId].quantity += quantity;
+            accountHoldingsMap[trade.stockId].totalCost += quantity * price;
+          } else {
+            const avgCost = accountHoldingsMap[trade.stockId].quantity > 0 ? accountHoldingsMap[trade.stockId].totalCost / accountHoldingsMap[trade.stockId].quantity : 0;
+            accountHoldingsMap[trade.stockId].quantity -= quantity;
+            accountHoldingsMap[trade.stockId].totalCost -= quantity * avgCost;
+            if (accountHoldingsMap[trade.stockId].quantity < 1e-9) {
+                accountHoldingsMap[trade.stockId].quantity = 0;
+                accountHoldingsMap[trade.stockId].totalCost = 0;
+            }
+          }
+      });
+      
       let stockValue = 0;
-      for (const stockId in accountHoldings) {
-        if (accountHoldings[stockId].quantity > 1e-9) {
+      const detailedHoldings = Object.entries(accountHoldingsMap)
+        .filter(([, data]) => data.quantity > 1e-9)
+        .map(([stockId, data]) => {
           const stock = stockMap.get(stockId);
-          const price = stock ? stockPrices[stock.ticker] || 0 : 0;
-          stockValue += accountHoldings[stockId].quantity * price;
-        }
-      }
+          if (!stock) return null;
+          const currentPrice = stockPrices[stock.ticker] || 0;
+          const currentValue = data.quantity * currentPrice;
+          stockValue += currentValue;
+
+          const avgPrice = data.quantity > 0 ? data.totalCost / data.quantity : 0;
+          const profitLoss = currentValue - data.totalCost;
+          const profitLossRate = data.totalCost > 0 ? (profitLoss / data.totalCost) * 100 : 0;
+          
+          return {
+            stockId,
+            stockName: stock.name,
+            quantity: data.quantity,
+            avgPrice,
+            currentPrice,
+            currentValue,
+            profitLoss,
+            profitLossRate,
+          };
+        }).filter((item): item is NonNullable<typeof item> => item !== null)
+          .sort((a, b) => b.currentValue - a.currentValue);
 
       const totalBuyCost = accountTrades.filter(t => t.tradeType === 'BUY').reduce((sum, t) => sum + (Number(t.price) || 0) * (Number(t.quantity) || 0), 0);
       const totalSellProceeds = accountTrades.filter(t => t.tradeType === 'SELL').reduce((sum, t) => sum + (Number(t.price) || 0) * (Number(t.quantity) || 0), 0);
 
-      // 2. Calculate cash movements and net deposits for THIS account
-      let netDeposits = 0; // This account's principal, including inter-account transfers
-      let netCashFromTransactions = 0; // Cash flow for calculating current cash balance
-
+      let netDeposits = 0;
+      let netCashFromTransactions = 0;
       (transactions || []).forEach(t => {
         const amount = Number(t.amount) || 0;
-        
-        // --- Money IN to this account ---
-        if ((t.accountId === account.id && (t.transactionType === TransactionType.Deposit || t.transactionType === TransactionType.Dividend)) || 
-            (t.counterpartyAccountId === account.id && t.transactionType === TransactionType.Withdrawal)) {
-          
+        if ((t.accountId === account.id && (t.transactionType === TransactionType.Deposit || t.transactionType === TransactionType.Dividend)) || (t.counterpartyAccountId === account.id && t.transactionType === TransactionType.Withdrawal)) {
           netCashFromTransactions += amount;
-          
-          // Add to net deposits ONLY if it's not a dividend
-          if (t.transactionType !== TransactionType.Dividend) {
-            netDeposits += amount;
-          }
-        } 
-        // --- Money OUT of this account ---
-        else if ((t.accountId === account.id && t.transactionType === TransactionType.Withdrawal) || 
-                  (t.counterpartyAccountId === account.id && t.transactionType === TransactionType.Deposit)) {
-          
+          if (t.transactionType !== TransactionType.Dividend) netDeposits += amount;
+        } else if ((t.accountId === account.id && t.transactionType === TransactionType.Withdrawal) || (t.counterpartyAccountId === account.id && t.transactionType === TransactionType.Deposit)) {
           netCashFromTransactions -= amount;
-
-          // Subtract from net deposits (dividends are not withdrawals, so no check needed)
           netDeposits -= amount;
         }
       });
       
-      const historicalPnlForAccount = (historicalGains || [])
-        .filter(g => g.accountId === account.id)
-        .reduce((sum, g) => sum + (Number(g.realizedPnl) || 0), 0);
-      
-      // 3. Calculate final metrics
-      // 초기 손익 기록(historicalGains)은 실현되어 현금화된 자산이므로, 예수금에 포함합니다.
+      const historicalPnlForAccount = (historicalGains || []).filter(g => g.accountId === account.id).reduce((sum, g) => sum + (Number(g.realizedPnl) || 0), 0);
       const cashBalance = netCashFromTransactions + totalSellProceeds - totalBuyCost + historicalPnlForAccount;
-      
-      // 총 평가금액은 이제 주식 평가액과 수정된 예수금을 합산합니다.
-      // (historicalPnlForAccount가 cashBalance에 이미 포함되었으므로 중복 계산을 피합니다.)
       const totalValue = cashBalance + stockValue;
-      
-      // Total profit/loss is calculated against the account's specific net deposits (principal).
       const profitLoss = totalValue - netDeposits;
       const returnRate = netDeposits !== 0 ? (profitLoss / netDeposits) * 100 : 0;
       
@@ -130,6 +141,7 @@ const AccountStatusScreen: React.FC<AccountStatusScreenProps> = ({
         totalValue,
         profitLoss,
         returnRate,
+        holdings: detailedHoldings,
       };
     });
   }, [accounts, brokers, trades, transactions, stocks, stockPrices, brokerMap, stockMap, historicalGains, securityAccountIds]);
@@ -153,46 +165,24 @@ const AccountStatusScreen: React.FC<AccountStatusScreenProps> = ({
         summary.totalAssets += account.totalValue;
     });
 
-    // For the total summary, calculate net deposits by only considering external transactions,
-    // ignoring internal transfers between security accounts.
     summary.totalNetDeposits = (transactions || []).reduce((acc, t) => {
-        if (t.transactionType === TransactionType.Dividend) {
-            return acc;
-        }
-        if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) {
-            return acc;
-        }
+        if (t.transactionType === TransactionType.Dividend) return acc;
+        if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return acc;
         const amount = Number(t.amount) || 0;
-        if (t.transactionType === TransactionType.Deposit) {
-            return acc + amount;
-        }
-        if (t.transactionType === TransactionType.Withdrawal) {
-            return acc - amount;
-        }
+        if (t.transactionType === TransactionType.Deposit) return acc + amount;
+        if (t.transactionType === TransactionType.Withdrawal) return acc - amount;
         return acc;
     }, 0);
-
 
     const currentYear = new Date().getFullYear();
     summary.ytdNetDeposits = (transactions || []).reduce((acc, t) => {
         const transactionYear = new Date(t.date).getFullYear();
-
-        if (transactionYear !== currentYear) {
-            return acc;
-        }
-        if (t.transactionType === TransactionType.Dividend) {
-            return acc;
-        }
-        if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) {
-            return acc;
-        }
+        if (transactionYear !== currentYear) return acc;
+        if (t.transactionType === TransactionType.Dividend) return acc;
+        if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return acc;
         const amount = Number(t.amount) || 0;
-        if (t.transactionType === TransactionType.Deposit) {
-            return acc + amount;
-        }
-        if (t.transactionType === TransactionType.Withdrawal) {
-            return acc - amount;
-        }
+        if (t.transactionType === TransactionType.Deposit) return acc + amount;
+        if (t.transactionType === TransactionType.Withdrawal) return acc - amount;
         return acc;
     }, 0);
 
@@ -262,15 +252,21 @@ const AccountStatusScreen: React.FC<AccountStatusScreenProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {accountDetails.map(account => (
                 <Card key={account.id} className="p-0 overflow-hidden flex flex-col justify-between shadow-lg">
-                    <div className="p-4 sm:p-5 bg-gradient-to-br from-blue-50 to-white dark:from-slate-800/70 dark:to-dark-card">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="p-2 bg-light-card dark:bg-dark-card rounded-lg shadow">
-                              <IdentificationIcon className="w-6 h-6 text-blue-500" />
+                    <div 
+                      className="p-4 sm:p-5 bg-gradient-to-br from-blue-50 to-white dark:from-slate-800/70 dark:to-dark-card cursor-pointer"
+                      onClick={() => handleToggleExpand(account.id)}
+                    >
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 bg-light-card dark:bg-dark-card rounded-lg shadow">
+                                <IdentificationIcon className="w-6 h-6 text-blue-500" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-bold text-light-text dark:text-dark-text">{account.name}</h3>
+                              <p className="text-sm text-light-secondary dark:text-dark-secondary">{account.brokerName}</p>
+                            </div>
                           </div>
-                          <div>
-                            <h3 className="text-lg font-bold text-light-text dark:text-dark-text">{account.name}</h3>
-                            <p className="text-sm text-light-secondary dark:text-dark-secondary">{account.brokerName}</p>
-                          </div>
+                          {expandedAccountId === account.id ? <ChevronUpIcon className="w-6 h-6"/> : <ChevronDownIcon className="w-6 h-6"/>}
                         </div>
                         
                         <p className="text-xs font-medium text-light-secondary dark:text-dark-secondary">총 평가금액</p>
@@ -298,6 +294,38 @@ const AccountStatusScreen: React.FC<AccountStatusScreenProps> = ({
                           </div>
                       </div>
                     </div>
+                    {expandedAccountId === account.id && (
+                      <div className="p-4 bg-gray-50 dark:bg-dark-bg/50 border-t border-gray-200/80 dark:border-slate-700">
+                        <h4 className="font-semibold mb-3 text-light-text dark:text-dark-text">보유 종목 상세</h4>
+                        {account.holdings.length > 0 ? (
+                          <div className="space-y-3">
+                            {account.holdings.map(holding => (
+                              <div key={holding.stockId} className="text-xs p-3 bg-light-card dark:bg-dark-card rounded-md shadow-sm">
+                                <div className="flex justify-between items-center font-bold">
+                                  <span>{holding.stockName}</span>
+                                  <span className={holding.profitLoss >= 0 ? 'text-profit' : 'text-loss'}>
+                                    {holding.profitLossRate.toFixed(2)}%
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center mt-1 text-light-secondary dark:text-dark-secondary">
+                                  <span>수량: {holding.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                                  <span className={holding.profitLoss >= 0 ? 'text-profit' : 'text-loss'}>
+                                    {formatCurrency(holding.profitLoss)}
+                                  </span>
+                                </div>
+                                <div className="mt-2 pt-2 border-t border-dashed border-gray-200/50 dark:border-slate-700/50 space-y-1">
+                                  <div className="flex justify-between"><span>평가금액:</span> <span className="font-medium text-light-text dark:text-dark-text">{formatCurrency(holding.currentValue)}</span></div>
+                                  <div className="flex justify-between"><span>평단가:</span> <span>{formatCurrency(holding.avgPrice)}</span></div>
+                                  <div className="flex justify-between"><span>현재가:</span> <span>{formatCurrency(holding.currentPrice)}</span></div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-center text-sm text-light-secondary dark:text-dark-secondary py-4">보유 주식이 없습니다.</p>
+                        )}
+                      </div>
+                    )}
                 </Card>
             ))}
         </div>

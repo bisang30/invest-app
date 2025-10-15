@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import { Screen } from '../types';
 import { HomeIcon, ChartLineIcon, ListBulletIcon, ArrowsRightLeftIcon, Cog8ToothIcon, WalletIcon, CurrencyWonIcon, CalendarDaysIcon } from './Icons';
@@ -20,6 +21,8 @@ const iconMap: Record<Screen, React.ComponentType<{ className: string }>> = {
   [Screen.ProfitManagement]: CurrencyWonIcon,
   [Screen.MonthlyHistory]: CalendarDaysIcon,
   [Screen.Index]: Cog8ToothIcon,
+  // FIX: Added 'Rebalancing' screen to satisfy the Record<Screen, ...> type.
+  [Screen.Rebalancing]: Cog8ToothIcon,
 };
 
 // 각 메뉴가 활성화되었을 때 적용할 색상 맵을 추가했습니다.
@@ -32,6 +35,8 @@ const activeColorMap: Record<Screen, string> = {
   [Screen.MonthlyHistory]: 'text-sky-600 dark:text-sky-400',
   [Screen.Index]: 'text-slate-600 dark:text-slate-400',
   [Screen.AccountTransactions]: 'text-cyan-600 dark:text-cyan-400',
+  // FIX: Added 'Rebalancing' screen to satisfy the Record<Screen, ...> type.
+  [Screen.Rebalancing]: 'text-slate-600 dark:text-slate-400',
 };
 
 
@@ -83,7 +88,8 @@ const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, setCurrentScreen, 
     Screen.Index,
   ];
 
-  const allNavItems = navOrder.map(screen => NAV_ITEMS.find(item => item.screen === screen)).filter((item): item is { screen: Screen; label: string } => !!item);
+  // FIX: Corrected the type predicate to use `typeof NAV_ITEMS[number]` for accurate type inference.
+  const allNavItems = navOrder.map(screen => NAV_ITEMS.find(item => item.screen === screen)).filter((item): item is typeof NAV_ITEMS[number] => !!item);
   
   const leftItems = allNavItems.slice(0, 3);
   const rightItems = allNavItems.slice(3);

@@ -3,6 +3,7 @@
 
 
 
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -201,6 +202,8 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   const [localBackgroundInterval, setLocalBackgroundInterval] = useState(String(backgroundFetchInterval));
   
   const [editingThresholds, setEditingThresholds] = useState<AlertThresholds>(alertThresholds);
+  const [notificationPermission, setNotificationPermission] = useState(Notification.permission);
+  
   useEffect(() => {
     setEditingThresholds(alertThresholds);
   }, [alertThresholds]);
@@ -609,6 +612,22 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       setAlertThresholds(editingThresholds);
       setToastMessage('알림 기준이 저장되었습니다.');
       setTimeout(() => setToastMessage(''), 3000);
+  };
+
+  const requestNotificationPermission = () => {
+    if (!('Notification' in window)) {
+      alert('이 브라우저는 웹 알림을 지원하지 않습니다.');
+      return;
+    }
+    Notification.requestPermission().then(permission => {
+      setNotificationPermission(permission);
+      if (permission === 'granted') {
+        new Notification('알림이 활성화되었습니다!', {
+          body: '리밸런싱 경고를 이제 알림으로 받을 수 있습니다.',
+          icon: '/icon.svg',
+        });
+      }
+    });
   };
 
 
@@ -1334,6 +1353,23 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
                                     <input type="checkbox" id="show-summary-toggle" className="sr-only peer" checked={showSummary} onChange={() => setShowSummary(p => !p)} />
                                     <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
                                   </label>
+                                </div>
+                              </div>
+                               <div className="pt-4 mt-4 border-t border-gray-200/50 dark:border-slate-700/50">
+                                <div>
+                                  <h4 className="font-semibold text-light-text dark:text-dark-text">웹 알림 설정</h4>
+                                  <p className="text-sm text-light-secondary dark:text-dark-secondary mt-1">
+                                    앱이 백그라운드에 있을 때 리밸런싱 '경고' 알림을 받으려면 브라우저 알림 권한을 허용해주세요.
+                                  </p>
+                                  <div className="mt-3">
+                                    {notificationPermission === 'granted' ? (
+                                      <p className="text-sm font-semibold text-profit">✅ 알림이 활성화되었습니다.</p>
+                                    ) : notificationPermission === 'denied' ? (
+                                      <p className="text-sm font-semibold text-loss">❌ 알림이 차단되었습니다. 브라우저 설정에서 변경해야 합니다.</p>
+                                    ) : (
+                                      <Button onClick={requestNotificationPermission}>알림 활성화</Button>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </div>
