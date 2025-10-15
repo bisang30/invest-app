@@ -1,9 +1,10 @@
-// services/geminiService.ts - 수정된 최종 버전
+// services/geminiService.ts
 
 import { GoogleGenAI } from "@google/genai";
 
-// FIX: Refactored to adhere to Gemini API guidelines. The API key must be sourced exclusively from `process.env.API_KEY`.
-// The previous method of reading from `window.GEMINI_API_KEY` violates the usage policy.
+// FIX: @google/genai 코딩 가이드라인에 따라 API 키를 `process.env.API_KEY`에서 가져오도록 수정합니다.
+// 빌드 환경이 이 변수를 올바르게 처리할 것으로 가정합니다.
+// 이 변경으로 "Property 'env' does not exist on type 'ImportMeta'" 타입스크립트 오류가 해결됩니다.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 
