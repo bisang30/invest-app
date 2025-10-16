@@ -1,4 +1,5 @@
 
+
 import React, { useMemo, useState } from 'react';
 import Card from '../components/ui/Card';
 import { Trade, Stock, TradeType, InitialPortfolio, PortfolioCategory } from '../types';
@@ -88,7 +89,8 @@ const StockStatusScreen: React.FC<StockStatusScreenProps> = ({ trades, stocks, s
       const currentWeight = totalPortfolioValue > 0 ? (holding.currentValue / totalPortfolioValue) * 100 : 0;
       const targetWeight = (initialPortfolio || {})[holding.id] || 0;
       const deviation = currentWeight - targetWeight;
-      return { ...holding, currentWeight, targetWeight, deviation };
+      const disparityRatio = targetWeight > 0 ? ((currentWeight - targetWeight) / targetWeight) * 100 : (currentWeight > 0 ? Infinity : 0);
+      return { ...holding, currentWeight, targetWeight, deviation, disparityRatio };
     });
 
     const grouped: { [key in PortfolioCategory]?: { totalValue: number, totalWeight: number, stocks: typeof holdingsWithWeight } } = {};
@@ -215,12 +217,12 @@ const StockStatusScreen: React.FC<StockStatusScreenProps> = ({ trades, stocks, s
 
                                     {holding.isPortfolio && (
                                       <div>
-                                        <div className="flex justify-between text-sm mb-1">
+                                        <div className="flex justify-between text-sm mb-1 flex-wrap">
                                             <span className="font-medium">현재 비중: {holding.currentWeight.toFixed(2)}%</span>
                                             <span className="text-light-secondary dark:text-dark-secondary">
                                               목표: {holding.targetWeight.toFixed(2)}%
                                               <span className={`ml-2 font-semibold ${holding.deviation >= 0 ? 'text-profit' : 'text-loss'}`}>
-                                                (편차: {holding.deviation > 0 ? '+' : ''}{holding.deviation.toFixed(2)}%)
+                                                (편차: {holding.deviation > 0 ? '+' : ''}{holding.deviation.toFixed(2)}%p, 이격률: {holding.disparityRatio > 0 ? '+' : ''}{holding.disparityRatio.toFixed(1)}%)
                                               </span>
                                             </span>
                                         </div>

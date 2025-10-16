@@ -111,6 +111,11 @@ export interface HistoricalGain {
 }
 
 export interface Thresholds {
+  /**
+   * 이격률 기준치 (%).
+   * 목표 비중 대비 현재 비중의 편차 비율을 의미합니다. ((현재 비중 - 목표 비중) / 목표 비중) * 100.
+   * 예: '주의' 기준이 20%라면, 이격률이 +20%를 초과하거나 -20% 미만일 때 '주의' 상태가 됩니다.
+   */
   caution: number;
   warning: number;
 }

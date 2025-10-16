@@ -1251,9 +1251,10 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
                         {section.id === 'alertSettings' && (
                              <div className="space-y-6">
                               <div>
-                                <h3 className="text-md font-semibold mb-2">전체 기준 (%)</h3>
+                                <h3 className="text-md font-semibold mb-2">전체 기준 (이격률 편차 %)</h3>
                                 <p className="text-sm text-light-secondary dark:text-dark-secondary mb-2">
-                                    개별 종목에 설정된 기준이 없으면 이 기준이 적용됩니다.
+                                    목표 비중 대비 현재 비중의 편차 비율(이격률)의 절대값이 설정된 값을 초과하면 알림이 발생합니다.<br/>
+                                    예: '경고' 기준이 20%라면, 이격률이 +20%를 초과하거나 -20% 미만일 때 경고 상태가 됩니다.
                                 </p>
                                 <div className="grid grid-cols-2 gap-4 p-3 bg-gray-50 dark:bg-slate-900/50 rounded-lg">
                                   <Input label="주의 (Caution)" type="number" step="0.1"
@@ -1265,7 +1266,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
                                 </div>
                               </div>
                               <div>
-                                <h3 className="text-md font-semibold mb-2">개별 종목 기준 (선택 사항)</h3>
+                                <h3 className="text-md font-semibold mb-2">개별 종목 기준 (이격률 편차 %, 선택 사항)</h3>
                                 <p className="text-sm text-light-secondary dark:text-dark-secondary mb-2">
                                     포트폴리오에 포함된 종목별로 알림 기준을 다르게 설정할 수 있습니다. 비워두면 전체 기준을 따릅니다.
                                 </p>
@@ -1280,11 +1281,11 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
                                                       <h4 className="font-semibold text-sm mb-2">{stock.name}</h4>
                                                       <div className="grid grid-cols-2 gap-4">
                                                           <Input label="주의 (%)" type="number" step="0.1"
-                                                              placeholder={`기본: ${editingThresholds.global.caution}%`}
+                                                              placeholder={`전체: ${editingThresholds.global.caution}%`}
                                                               value={editingThresholds.stocks[stock.id]?.caution ?? ''}
                                                               onChange={(e) => handleThresholdChange('stocks', 'caution', e.target.value, stock.id)} />
                                                           <Input label="경고 (%)" type="number" step="0.1"
-                                                              placeholder={`기본: ${editingThresholds.global.warning}%`}
+                                                              placeholder={`전체: ${editingThresholds.global.warning}%`}
                                                               value={editingThresholds.stocks[stock.id]?.warning ?? ''}
                                                               onChange={(e) => handleThresholdChange('stocks', 'warning', e.target.value, stock.id)} />
                                                       </div>

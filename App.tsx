@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Screen, Theme, TradeType, Account, Broker, Stock, Trade, AccountTransaction, BankAccount, InitialPortfolio, MonthlyAccountValue, PortfolioCategory, HistoricalGain, AlertThresholds, TransactionType } from './types';
 import HomeScreen from './screens/HomeScreen';
@@ -69,7 +68,7 @@ const DEFAULT_INITIAL_PORTFOLIO: InitialPortfolio = {
 };
 
 const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
-  global: { caution: 3, warning: 5 },
+  global: { caution: 20, warning: 30 },
   categories: {},
   stocks: {}
 };
@@ -653,6 +652,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         const currentWeight = totalPortfolioStockValue > 0 ? (currentValue / totalPortfolioStockValue) * 100 : 0;
         const targetWeight = (initialPortfolio || {})[stock.id] || 0;
         const requiredPurchase = (totalPortfolioStockValue * (targetWeight / 100)) - currentValue;
+        const disparityRatio = targetWeight > 0 ? ((currentWeight - targetWeight) / targetWeight) * 100 : (currentWeight > 0 ? Infinity : 0);
         
         if (targetWeight > 0) {
             targetPercentagesByCategory[stock.category] = (targetPercentagesByCategory[stock.category] || 0) + targetWeight;
@@ -665,6 +665,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             targetWeight,
             deviation: currentWeight - targetWeight,
             requiredPurchase,
+            disparityRatio,
         };
       }).filter(s => s.currentValue > 0 || s.targetWeight > 0);
 
@@ -704,18 +705,18 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
       const { allStocks } = financialSummary;
       const { global: globalThresholds, stocks: stockThresholds } = alertThresholds;
 
-      const newWarnings: { name: string; deviation: number }[] = [];
+      const newWarnings: { name: string; disparityRatio: number }[] = [];
 
       allStocks.forEach((stock: any) => {
         if (stock.targetWeight > 0) {
           const stockThresh = stockThresholds[stock.id] || {};
           const warningThreshold = stockThresh.warning ?? globalThresholds.warning;
-          const absDeviation = Math.abs(stock.deviation);
+          const disparityDeviation = Math.abs(stock.disparityRatio);
 
-          if (absDeviation > warningThreshold && !notifiedWarningsRef.current.has(stock.id)) {
-            newWarnings.push({ name: stock.name, deviation: stock.deviation });
+          if (disparityDeviation > warningThreshold && !notifiedWarningsRef.current.has(stock.id)) {
+            newWarnings.push({ name: stock.name, disparityRatio: stock.disparityRatio });
             notifiedWarningsRef.current.add(stock.id);
-          } else if (absDeviation <= warningThreshold && notifiedWarningsRef.current.has(stock.id)) {
+          } else if (disparityDeviation <= warningThreshold && notifiedWarningsRef.current.has(stock.id)) {
             // Clear notification status if it's back in range
             notifiedWarningsRef.current.delete(stock.id);
           }
@@ -724,11 +725,11 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
 
       if (newWarnings.length > 0) {
         const notificationBody = newWarnings
-          .map(w => `${w.name} (${w.deviation > 0 ? '+' : ''}${w.deviation.toFixed(1)}%)`)
+          .map(w => `${w.name} (이격률 ${w.disparityRatio > 0 ? '+' : ''}${w.disparityRatio.toFixed(0)}%)`)
           .join(', ');
         
         new Notification('리밸런싱 경고', {
-          body: `목표 비중을 초과한 종목이 있습니다: ${notificationBody}`,
+          body: `목표 비중과 차이가 큰 종목이 있습니다: ${notificationBody}`,
           icon: '/icon.svg',
         });
       }
@@ -820,6 +821,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           stockId={rebalancingStockId!}
           setCurrentScreen={navigateToScreen}
           financialSummary={financialSummary}
+          alertThresholds={alertThresholds}
         />;
       default:
         return <HomeScreen 

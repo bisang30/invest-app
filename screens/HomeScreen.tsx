@@ -9,6 +9,7 @@ interface AlertedStock {
   id: string;
   name: string;
   deviation: number;
+  disparityRatio: number;
   level: 'caution' | 'warning';
 }
 
@@ -88,16 +89,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ financialSummary, alertThreshol
 
     financialSummary.allStocks.forEach((stock: any) => {
       if (stock.targetWeight > 0) {
-        const deviation = stock.deviation;
-        const absDeviation = Math.abs(deviation);
+        const disparityDeviation = Math.abs(stock.disparityRatio);
         const stockThresholds = alertThresholds.stocks[stock.id] || {};
         const cautionThreshold = stockThresholds.caution ?? alertThresholds.global.caution;
         const warningThreshold = stockThresholds.warning ?? alertThresholds.global.warning;
 
         let level: 'warning' | 'caution' | null = null;
-        if (absDeviation > warningThreshold) {
+        if (disparityDeviation > warningThreshold) {
           level = 'warning';
-        } else if (absDeviation > cautionThreshold) {
+        } else if (disparityDeviation > cautionThreshold) {
           level = 'caution';
         }
         
@@ -106,7 +106,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ financialSummary, alertThreshol
             alertsByCategory.set(stock.category, { warnings: [], cautions: [] });
           }
           const entry = alertsByCategory.get(stock.category)!;
-          const alertStock = { id: stock.id, name: stock.name, deviation, level };
+          const alertStock = { id: stock.id, name: stock.name, deviation: stock.deviation, disparityRatio: stock.disparityRatio, level };
           if (level === 'warning') {
             entry.warnings.push(alertStock);
           } else {
@@ -119,8 +119,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ financialSummary, alertThreshol
     return Array.from(alertsByCategory.entries())
       .map(([category, { warnings, cautions }]) => ({
         category,
-        warnings: warnings.sort((a, b) => Math.abs(b.deviation) - Math.abs(a.deviation)),
-        cautions: cautions.sort((a, b) => Math.abs(b.deviation) - Math.abs(a.deviation)),
+        warnings: warnings.sort((a, b) => Math.abs(b.disparityRatio) - Math.abs(a.disparityRatio)),
+        cautions: cautions.sort((a, b) => Math.abs(b.disparityRatio) - Math.abs(a.disparityRatio)),
       }))
       .sort((a, b) => {
         if (a.warnings.length > 0 && b.warnings.length === 0) return -1;
@@ -221,7 +221,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ financialSummary, alertThreshol
             {isRebalancingAlertExpanded && (
               <div className="px-4 pb-4 space-y-3 border-t border-gray-200/80 dark:border-slate-700">
                 {rebalancingAlerts.map(({ category, warnings, cautions }) => {
-                  const allStocks = [...warnings, ...cautions].sort((a,b) => Math.abs(b.deviation) - Math.abs(a.deviation));
+                  const allStocks = [...warnings, ...cautions].sort((a,b) => Math.abs(b.disparityRatio) - Math.abs(a.disparityRatio));
                   return (
                     <div key={category}>
                       <div className="p-3 bg-gray-100 dark:bg-slate-900/50 rounded-lg cursor-pointer hover:bg-gray-200/70 dark:hover:bg-slate-800/50" onClick={() => toggleAlertCategory(category)}>
@@ -241,7 +241,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ financialSummary, alertThreshol
                               <div className="flex justify-between items-center text-sm">
                                 <span className="font-medium">{stock.name}</span>
                                 <div className="text-right">
-                                  <span className={`font-bold ${stock.level === 'warning' ? 'text-loss' : 'text-yellow-600 dark:text-yellow-400'}`}>목표 대비: {stock.deviation >= 0 ? '+' : ''}{stock.deviation.toFixed(1)}%</span>
+                                  <span className={`font-bold ${stock.level === 'warning' ? 'text-loss' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                                    이격률: {stock.disparityRatio >= 0 ? '+' : ''}{stock.disparityRatio.toFixed(1)}%
+                                  </span>
                                   <span className={`ml-2 text-xs font-bold px-2 py-1 rounded-full ${stock.level === 'warning' ? 'bg-loss text-white' : 'bg-yellow-200 dark:bg-yellow-600/50 text-yellow-800 dark:text-yellow-200'}`}>{stock.level === 'warning' ? '경고' : '주의'}</span>
                                 </div>
                               </div>
