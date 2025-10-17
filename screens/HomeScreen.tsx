@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import Card from '../components/ui/Card';
-import { PortfolioCategory, AlertThresholds, MonthlyAccountValue, AccountTransaction, Account } from '../types';
+import { PortfolioCategory, AlertThresholds, MonthlyAccountValue, AccountTransaction, Account, TransactionType } from '../types';
 import Select from '../components/ui/Select';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, ComposedChart, Line, Bar, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, ChevronDownIcon, ChevronUpIcon, CircleStackIcon, BanknotesIcon } from '../components/Icons';
@@ -183,7 +183,28 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ financialSummary, alertThreshol
   
     return yearDataPoints.map(mv => {
       const pointInTime = new Date(mv.date);
-      const cumulativeDeposits = (transactions || []).filter(t => new Date(t.date) <= pointInTime && !t.counterpartyAccountId && t.transactionType !== 'DIVIDEND').reduce((acc, t) => acc + (Number(t.amount) || 0) * (t.transactionType === 'DEPOSIT' ? 1 : -1), 0);
+      
+      const cumulativeDeposits = (transactions || [])
+        .filter(t => {
+          if (new Date(t.date) > pointInTime) return false;
+          if (t.transactionType === TransactionType.Dividend) return false;
+          // 내부 계좌 이체는 제외
+          if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) {
+              return false;
+          }
+          return true;
+        })
+        .reduce((acc, t) => {
+          const amount = Number(t.amount) || 0;
+          if (t.transactionType === TransactionType.Deposit) {
+            return acc + amount;
+          }
+          if (t.transactionType === TransactionType.Withdrawal) {
+            return acc - amount;
+          }
+          return acc;
+        }, 0);
+
       const year = String(pointInTime.getFullYear()).slice(-2);
       const month = String(pointInTime.getMonth() + 1).padStart(2, '0');
       return { name: `${year}.${month}`, totalValue: Number(mv.totalValue) || 0, deposits: cumulativeDeposits };
