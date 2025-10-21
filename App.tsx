@@ -728,10 +728,15 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           .map(w => `${w.name} (이격률 ${w.disparityRatio > 0 ? '+' : ''}${w.disparityRatio.toFixed(0)}%)`)
           .join(', ');
         
-        new Notification('리밸런싱 경고', {
-          body: `목표 비중과 차이가 큰 종목이 있습니다: ${notificationBody}`,
-          icon: '/icon.svg',
-        });
+        if ('serviceWorker' in navigator && Notification.permission === 'granted') {
+          navigator.serviceWorker.ready.then(registration => {
+            registration.showNotification('리밸런싱 경고', {
+              body: `목표 비중과 차이가 큰 종목이 있습니다: ${notificationBody}`,
+              icon: '/icon.svg',
+              tag: 'rebalancing-warning' // 동일한 경고가 중복되지 않도록 태그를 사용합니다.
+            });
+          });
+        }
       }
     }
   }, [financialSummary, alertThresholds]);
