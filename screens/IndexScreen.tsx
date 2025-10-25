@@ -1,16 +1,10 @@
-
-
-
-
-
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
-import { Broker, Account, Stock, InitialPortfolio, PortfolioCategory, Trade, AccountTransaction, BankAccount, Theme, TradeType, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds } from '../types';
+import { Broker, Account, Stock, InitialPortfolio, PortfolioCategory, Trade, AccountTransaction, BankAccount, Theme, TradeType, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds, Screen } from '../types';
 import { PORTFOLIO_CATEGORIES, DATA_VERSION } from '../constants';
 import { exportAllData } from '../services/exportService';
 import * as XLSX from 'xlsx';
@@ -89,6 +83,8 @@ interface IndexScreenProps {
   historicalGains: HistoricalGain[];
   alertThresholds: AlertThresholds;
   setAlertThresholds: React.Dispatch<React.SetStateAction<AlertThresholds>>;
+  homeScreenPreference: 'HOME' | 'HOLDINGS_STATUS';
+  setHomeScreenPreference: React.Dispatch<React.SetStateAction<'HOME' | 'HOLDINGS_STATUS'>>;
 }
 
 interface SettingsSectionProps {
@@ -143,7 +139,8 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   monthlyValues, setMonthlyValues,
   showSummary, setShowSummary,
   historicalGains,
-  alertThresholds, setAlertThresholds
+  alertThresholds, setAlertThresholds,
+  homeScreenPreference, setHomeScreenPreference,
 }) => {
   const [openSection, setOpenSection] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState('');
@@ -1322,6 +1319,23 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
                         {section.id === 'appSettings' && (
                              <div className="space-y-4">
                               <div>
+                                <h4 className="font-semibold text-light-text dark:text-dark-text">홈 화면 설정</h4>
+                                <p className="text-sm text-light-secondary dark:text-dark-secondary">
+                                  네비게이션 바 중앙의 홈 버튼을 눌렀을 때 표시될 화면을 선택합니다.
+                                </p>
+                                <div className="mt-2">
+                                  <Select
+                                    label="기본 홈 화면"
+                                    id="home-screen-preference"
+                                    value={homeScreenPreference}
+                                    onChange={(e) => setHomeScreenPreference(e.target.value as 'HOME' | 'HOLDINGS_STATUS')}
+                                  >
+                                    <option value={Screen.Home}>투자 현황</option>
+                                    <option value={Screen.HoldingsStatus}>보유 현황</option>
+                                  </Select>
+                                </div>
+                              </div>
+                              <div className="pt-4 mt-4 border-t border-gray-200/50 dark:border-slate-700/50">
                                 <p className="text-sm text-light-secondary dark:text-dark-secondary">
                                   앱이 백그라운드(비활성) 상태일 때 시세를 가져오는 주기를 설정합니다. 
                                   주기가 짧을수록 배터리 소모가 늘어날 수 있습니다. (앱 활성 시에는 5분으로 고정)

@@ -9,6 +9,8 @@ import ProfitManagementScreen from './screens/ProfitManagementScreen';
 import MonthlyHistoryScreen from './screens/MonthlyHistoryScreen';
 import IndexScreen from './screens/IndexScreen';
 import RebalancingScreen from './screens/RebalancingScreen';
+import MenuScreen from './screens/MenuScreen';
+import HoldingsStatusScreen from './screens/HoldingsStatusScreen';
 import PasswordScreen from './screens/PasswordScreen';
 import BottomNav from './components/BottomNav';
 import Header from './components/Header';
@@ -217,18 +219,30 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   const [showSummary, setShowSummary] = useLocalStorage<boolean>('showSummary', true);
   const [historicalGains, setHistoricalGains] = useLocalStorage<HistoricalGain[]>('historicalGains', []);
   const [alertThresholds, setAlertThresholds] = useLocalStorage<AlertThresholds>('alertThresholds', DEFAULT_ALERT_THRESHOLDS);
+  const [homeScreenPreference, setHomeScreenPreference] = useLocalStorage<'HOME' | 'HOLDINGS_STATUS'>('homeScreenPreference', Screen.HoldingsStatus);
+
 
   const [animationClass, setAnimationClass] = useState('');
 
-  const swipeNavOrder = useMemo(() => [
-      Screen.StockStatus,
-      Screen.AccountStatus,
-      Screen.TradeHistory,
-      Screen.Home,
-      Screen.ProfitManagement,
-      Screen.MonthlyHistory,
-      Screen.Index,
-  ], []);
+  const swipeNavOrder = useMemo(() => {
+    if (homeScreenPreference === Screen.Home) {
+      return [
+        Screen.Menu,
+        Screen.StockStatus,
+        Screen.Home,
+        Screen.HoldingsStatus,
+        Screen.AccountStatus,
+      ];
+    } else { // HOLDINGS_STATUS is home
+      return [
+        Screen.Menu,
+        Screen.StockStatus,
+        Screen.HoldingsStatus,
+        Screen.Home,
+        Screen.AccountStatus,
+      ];
+    }
+  }, [homeScreenPreference]);
 
   const screenIndexRef = useRef(swipeNavOrder.findIndex(s => s === currentScreen));
   const notifiedWarningsRef = useRef(new Set<string>());
@@ -247,6 +261,12 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         .catch(error => console.error("Failed to load app version:", error));
   }, []);
   
+  useEffect(() => {
+    if (homeScreenPreference) {
+      setCurrentScreen(homeScreenPreference);
+    }
+  }, [homeScreenPreference]);
+
   const navigateToScreen = useCallback((newScreen: Screen) => {
       if (rebalancingStockId) {
         setRebalancingStockId(null);
@@ -773,6 +793,14 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           stockPrices={stockPrices}
           historicalGains={historicalGains}
         />;
+      case Screen.HoldingsStatus:
+        return <HoldingsStatusScreen
+          trades={trades} 
+          stocks={stocks} 
+          stockPrices={stockPrices} 
+          initialPortfolio={initialPortfolio} 
+          alertThresholds={alertThresholds}
+        />;
       case Screen.TradeHistory:
         return <TradeHistoryScreen trades={trades} setTrades={setTrades} accounts={accounts} stocks={stocks} />;
       case Screen.AccountTransactions:
@@ -820,7 +848,11 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             setShowSummary={setShowSummary}
             alertThresholds={alertThresholds}
             setAlertThresholds={setAlertThresholds}
+            homeScreenPreference={homeScreenPreference}
+            setHomeScreenPreference={setHomeScreenPreference}
           />;
+      case Screen.Menu:
+        return <MenuScreen setCurrentScreen={navigateToScreen} />;
       case Screen.Rebalancing:
         return <RebalancingScreen
           stockId={rebalancingStockId!}
@@ -862,7 +894,12 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           {renderScreen()}
         </main>
       </div>
-      <BottomNav currentScreen={currentScreen} setCurrentScreen={navigateToScreen} appVersion={appVersion} />
+      <BottomNav 
+        currentScreen={currentScreen} 
+        setCurrentScreen={navigateToScreen} 
+        appVersion={appVersion}
+        homeScreenPreference={homeScreenPreference}
+      />
 
       <Modal isOpen={isExitModalOpen} onClose={() => setIsExitModalOpen(false)} title="앱 종료 확인">
         <p>앱을 종료하기 전에 현재 데이터를 엑셀 파일로 백업하시겠습니까?</p>

@@ -1,5 +1,3 @@
-
-
 export const Theme = {
   Light: 'light',
   Dark: 'dark',
@@ -17,6 +15,8 @@ export const Screen = {
   ProfitManagement: 'PROFIT_MANAGEMENT',
   MonthlyHistory: 'MONTHLY_HISTORY',
   Rebalancing: 'REBALANCING',
+  Menu: 'MENU',
+  HoldingsStatus: 'HOLDINGS_STATUS',
 } as const;
 export type Screen = typeof Screen[keyof typeof Screen];
 

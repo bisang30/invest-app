@@ -1,8 +1,6 @@
-
-
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Screen } from '../types';
-import { HomeIcon, ChartLineIcon, ListBulletIcon, ArrowsRightLeftIcon, Cog8ToothIcon, WalletIcon, CurrencyWonIcon, CalendarDaysIcon } from './Icons';
+import { HomeIcon, ChartLineIcon, WalletIcon, Squares2X2Icon, ChartPieIcon, ArrowTrendingUpIcon } from './Icons';
 import { NAV_ITEMS } from '../constants';
 
 
@@ -10,44 +8,61 @@ interface BottomNavProps {
   currentScreen: Screen;
   setCurrentScreen: (screen: Screen) => void;
   appVersion: string;
+  homeScreenPreference: 'HOME' | 'HOLDINGS_STATUS';
 }
 
 const iconMap: Record<Screen, React.ComponentType<{ className: string }>> = {
-  [Screen.Home]: HomeIcon,
+  [Screen.Home]: ArrowTrendingUpIcon,
   [Screen.StockStatus]: ChartLineIcon,
   [Screen.AccountStatus]: WalletIcon,
-  [Screen.TradeHistory]: ListBulletIcon,
-  [Screen.AccountTransactions]: ArrowsRightLeftIcon,
-  [Screen.ProfitManagement]: CurrencyWonIcon,
-  [Screen.MonthlyHistory]: CalendarDaysIcon,
-  [Screen.Index]: Cog8ToothIcon,
-  // FIX: Added 'Rebalancing' screen to satisfy the Record<Screen, ...> type.
-  [Screen.Rebalancing]: Cog8ToothIcon,
+  [Screen.Menu]: Squares2X2Icon,
+  [Screen.HoldingsStatus]: ChartPieIcon,
+  // Other screens are not in the main nav anymore, but we need to satisfy the type
+  [Screen.TradeHistory]: Squares2X2Icon,
+  [Screen.AccountTransactions]: Squares2X2Icon,
+  [Screen.ProfitManagement]: Squares2X2Icon,
+  [Screen.MonthlyHistory]: Squares2X2Icon,
+  [Screen.Index]: Squares2X2Icon,
+  [Screen.Rebalancing]: Squares2X2Icon,
 };
 
-// 각 메뉴가 활성화되었을 때 적용할 색상 맵을 추가했습니다.
 const activeColorMap: Record<Screen, string> = {
-  [Screen.Home]: '', // 홈 버튼 스타일은 별도로 관리됩니다.
+  [Screen.Home]: 'text-blue-600 dark:text-blue-400',
   [Screen.StockStatus]: 'text-green-600 dark:text-green-400',
   [Screen.AccountStatus]: 'text-amber-600 dark:text-amber-400',
+  [Screen.Menu]: 'text-teal-600 dark:text-teal-400',
+  [Screen.HoldingsStatus]: 'text-violet-600 dark:text-violet-400',
+  // Keep others for type consistency, though they won't be active in the new nav
   [Screen.TradeHistory]: 'text-indigo-600 dark:text-indigo-400',
   [Screen.ProfitManagement]: 'text-rose-600 dark:text-rose-400',
   [Screen.MonthlyHistory]: 'text-sky-600 dark:text-sky-400',
   [Screen.Index]: 'text-slate-600 dark:text-slate-400',
   [Screen.AccountTransactions]: 'text-cyan-600 dark:text-cyan-400',
-  // FIX: Added 'Rebalancing' screen to satisfy the Record<Screen, ...> type.
   [Screen.Rebalancing]: 'text-slate-600 dark:text-slate-400',
+};
+
+const activeBgColorMap: Record<Screen, string> = {
+  [Screen.Home]: 'bg-blue-100 dark:bg-blue-900/50',
+  [Screen.StockStatus]: 'bg-green-100 dark:bg-green-900/50',
+  [Screen.AccountStatus]: 'bg-amber-100 dark:bg-amber-900/50',
+  [Screen.Menu]: 'bg-teal-100 dark:bg-teal-900/50',
+  [Screen.HoldingsStatus]: 'bg-violet-100 dark:bg-violet-900/50',
+  // Keep others for type consistency
+  [Screen.TradeHistory]: 'bg-indigo-100 dark:bg-indigo-900/50',
+  [Screen.ProfitManagement]: 'bg-rose-100 dark:bg-rose-900/50',
+  [Screen.MonthlyHistory]: 'bg-sky-100 dark:bg-sky-900/50',
+  [Screen.Index]: 'bg-slate-100 dark:bg-slate-700',
+  [Screen.AccountTransactions]: 'bg-cyan-100 dark:bg-cyan-900/50',
+  [Screen.Rebalancing]: 'bg-slate-100 dark:bg-slate-700',
 };
 
 
 const labelMap: Record<string, string> = {
   '종목 현황': '종목현황',
   '계좌 현황': '계좌현황',
-  '홈': '홈',
-  '매매기록': '매매기록',
-  '수익 관리': '수익관리',
-  '월말 결산': '월말결산',
-  '설정': '설정',
+  '투자 현황': '투자현황',
+  '메뉴': '메뉴',
+  '포트폴리오 가꾸기': '가꾸기',
 };
 
 const NavItem: React.FC<{
@@ -58,44 +73,53 @@ const NavItem: React.FC<{
   const Icon = iconMap[item.screen];
   const shortLabel = labelMap[item.label] || item.label;
   
-  // 활성화 상태에 따라 색상 맵에서 해당 색상을 가져옵니다.
   const activeColor = activeColorMap[item.screen];
-  // 활성화 인디케이터 바의 배경색을 텍스트 색상 클래스에서 동적으로 생성합니다.
-  const activeBgColor = activeColor.replace(/text/g, 'bg');
+  const activeBg = activeBgColorMap[item.screen];
 
   return (
     <button
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center w-full pt-2 pb-1 text-xs font-medium transition-all duration-200 ${
-        isActive ? activeColor : 'text-light-secondary dark:text-dark-secondary'
+      className={`flex flex-col items-center justify-center w-full h-full transition-colors duration-200 group ${
+        isActive ? activeColor : 'text-light-secondary dark:text-dark-secondary hover:text-light-primary dark:hover:text-dark-primary'
       }`}
     >
-      {Icon && <Icon className="w-6 h-6 mb-1" />}
-      <span>{shortLabel}</span>
-      {isActive && <div className={`absolute bottom-0 h-1 w-4 rounded-full ${activeBgColor}`}></div>}
+      <div className={`flex flex-col items-center justify-center p-2 rounded-xl transition-colors duration-200 ${isActive ? activeBg : ''}`}>
+          {Icon && <Icon className="w-6 h-6" />}
+          <span className="mt-1 text-[10px] leading-tight font-semibold">{shortLabel}</span>
+      </div>
     </button>
   );
 };
 
 
-const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, setCurrentScreen, appVersion }) => {
-  const navOrder = [
-    Screen.StockStatus,
-    Screen.AccountStatus,
-    Screen.TradeHistory,
-    Screen.ProfitManagement,
-    Screen.MonthlyHistory,
-    Screen.Index,
-  ];
+const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, setCurrentScreen, appVersion, homeScreenPreference }) => {
+  const navOrder = useMemo(() => {
+    // FIX: Explicitly type `baseOrder` as `Screen[]` to prevent overly narrow type inference.
+    // This ensures that `Screen.Home` is considered a valid type for the array elements,
+    // resolving the error when calling `setCurrentScreen(homeScreenPreference)` with the value 'HOME'.
+    const baseOrder: Screen[] = [
+      Screen.Menu,
+      Screen.StockStatus,
+      Screen.HoldingsStatus,
+      Screen.AccountStatus,
+    ];
 
-  // FIX: Corrected the type predicate to use `typeof NAV_ITEMS[number]` for accurate type inference.
+    if (homeScreenPreference === Screen.HoldingsStatus) {
+      const holdingsIndex = baseOrder.indexOf(Screen.HoldingsStatus);
+      if (holdingsIndex !== -1) {
+        baseOrder[holdingsIndex] = Screen.Home;
+      }
+    }
+    return baseOrder;
+  }, [homeScreenPreference]);
+
   const allNavItems = navOrder.map(screen => NAV_ITEMS.find(item => item.screen === screen)).filter((item): item is typeof NAV_ITEMS[number] => !!item);
   
-  const leftItems = allNavItems.slice(0, 3);
-  const rightItems = allNavItems.slice(3);
+  const leftItems = allNavItems.slice(0, 2);
+  const rightItems = allNavItems.slice(2);
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 h-[72px] bg-light-card dark:bg-dark-card border-t border-gray-200/80 dark:border-slate-700">
+    <nav className="fixed bottom-0 left-0 right-0 h-[72px] bg-light-card dark:bg-dark-card shadow-[0_-2px_10px_rgba(0,0,0,0.05)] dark:shadow-[0_-2px_10px_rgba(0,0,0,0.2)]">
       <div className="flex justify-around items-center h-full max-w-4xl mx-auto">
         {leftItems.map((item) => (
           <NavItem
@@ -108,8 +132,8 @@ const BottomNav: React.FC<BottomNavProps> = ({ currentScreen, setCurrentScreen, 
 
         <div className="relative w-full flex justify-center">
             <button
-                onClick={() => setCurrentScreen(Screen.Home)}
-                className={`absolute bottom-[18px] w-14 h-14 flex items-center justify-center rounded-full shadow-lg transition-transform duration-200 ease-in-out ${currentScreen === Screen.Home ? 'bg-light-primary dark:bg-dark-primary scale-110' : 'bg-light-secondary dark:bg-dark-secondary'}`}
+                onClick={() => setCurrentScreen(homeScreenPreference)}
+                className={`absolute bottom-[18px] w-14 h-14 flex items-center justify-center rounded-full shadow-lg transition-transform duration-200 ease-in-out ${currentScreen === homeScreenPreference ? 'bg-light-primary dark:bg-dark-primary scale-110' : 'bg-light-secondary dark:bg-dark-secondary'}`}
                 aria-label="Home"
             >
                 <HomeIcon className="w-7 h-7 text-white"/>

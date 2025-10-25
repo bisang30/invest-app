@@ -180,29 +180,26 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ financialSummary, alertThreshol
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   
     if (yearDataPoints.length === 0) return [];
+    
+    // 순수 외부 입출금 거래만 미리 필터링하여 계산 정확성 및 효율성 확보
+    const netExternalTransactions = (transactions || []).filter(t => {
+      if (t.transactionType === TransactionType.Dividend) return false; // 배당금 제외
+      if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return false; // 증권계좌 간 내부이체 제외
+      return true;
+    });
   
     return yearDataPoints.map(mv => {
       const pointInTime = new Date(mv.date);
       
-      const cumulativeDeposits = (transactions || [])
-        .filter(t => {
-          if (new Date(t.date) > pointInTime) return false;
-          if (t.transactionType === TransactionType.Dividend) return false;
-          // 내부 계좌 이체는 제외
-          if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) {
-              return false;
-          }
-          return true;
-        })
+      const cumulativeDeposits = netExternalTransactions
+        .filter(t => new Date(t.date) <= pointInTime)
         .reduce((acc, t) => {
           const amount = Number(t.amount) || 0;
           if (t.transactionType === TransactionType.Deposit) {
             return acc + amount;
           }
-          if (t.transactionType === TransactionType.Withdrawal) {
-            return acc - amount;
-          }
-          return acc;
+          // 출금(Withdrawal)의 경우 금액을 차감
+          return acc - amount;
         }, 0);
 
       const year = String(pointInTime.getFullYear()).slice(-2);

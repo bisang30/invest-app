@@ -1,5 +1,5 @@
 {
-  "name": "Investment Management App V2.1.1",
+  "name": "Investment Management App V2.2.0",
   "description": "A comprehensive application for managing investment portfolios. This version improves user experience by adjusting swipe sensitivity for screen navigation and introduces web notifications for critical rebalancing alerts.",
   "requestFramePermissions": []
 }
