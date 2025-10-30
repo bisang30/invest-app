@@ -1,7 +1,5 @@
-
-
 import * as XLSX from 'xlsx';
-import { Broker, Account, BankAccount, Stock, InitialPortfolio, Trade, TradeType, AccountTransaction, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds } from '../types';
+import { Broker, Account, BankAccount, Stock, InitialPortfolio, Trade, TradeType, AccountTransaction, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds, InvestmentGoal } from '../types';
 
 
 /**
@@ -98,13 +96,38 @@ export const exportAllData = (
   alertThresholds: AlertThresholds,
   backgroundFetchInterval: number,
   showSummary: boolean,
+  investmentGoals: InvestmentGoal[],
   fileName: string
 ) => {
     const sheets: { name: string, data: any[] }[] = [];
     const brokerMap = new Map((brokers || []).map(b => [b.id, b.name]));
     const accountMap = new Map((accounts || []).map(a => [a.id, a.name]));
+    const goalMap = new Map((investmentGoals || []).map(g => [g.id, g.name]));
+    const stockMap = new Map<string, Stock>((stocks || []).map(s => [s.id, s]));
     const portfolioStocks = (stocks || []).filter(s => s.isPortfolio);
     
+    sheets.push({ name: '투자 목표', data: (investmentGoals || []).map(g => ({ 
+      '목표명': g.name, 
+      '생성일': g.creationDate,
+      '목표유형': g.goalType === 'shares' ? '수량' : '금액',
+      '목표금액': g.goalType === 'amount' ? g.targetAmount : '' 
+    })) });
+    
+    const goalSharesData: { '목표명': string; '종목명': string; '티커': string; '목표수량': number }[] = [];
+    (investmentGoals || []).forEach(g => {
+      if (g.goalType === 'shares' && g.targetShares) {
+        Object.entries(g.targetShares).forEach(([stockId, shares]) => {
+          const stock = stockMap.get(stockId);
+          if (stock) {
+            goalSharesData.push({ '목표명': g.name, '종목명': stock.name, '티커': stock.ticker, '목표수량': shares });
+          }
+        });
+      }
+    });
+    if (goalSharesData.length > 0) {
+      sheets.push({ name: '목표-종목수량', data: goalSharesData });
+    }
+
     sheets.push({ name: '증권사', data: (brokers || []).map(b => ({ '증권사명': b.name })) });
     sheets.push({ name: '증권계좌', data: (accounts || []).map(a => ({ '계좌명': a.name, '증권사': brokerMap.get(a.brokerId) || 'N/A' })) });
     sheets.push({ name: '은행계좌', data: (bankAccounts || []).map(b => ({ '은행명': b.bankName, '계좌별명': b.name })) });
@@ -118,7 +141,6 @@ export const exportAllData = (
     })) });
     sheets.push({ name: '포트폴리오', data: portfolioStocks.map(s => ({ '종목명': s.name, '티커': s.ticker, '카테고리': s.category, '목표 비중 (%)': initialPortfolio[s.id] || 0 })) });
     
-    const stockMap = new Map<string, Stock>((stocks || []).map(s => [s.id, s]));
     sheets.push({
         name: '매매기록',
         data: (trades || []).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(trade => {
@@ -126,90 +148,93 @@ export const exportAllData = (
             const account = accountMap.get(trade.accountId);
             const quantity = Number(trade.quantity) || 0;
             const price = Number(trade.price) || 0;
-            // FIX: `account` is the account name string from `accountMap`, so `account.name` is incorrect. Changed to `account`.
-            return { '일자': trade.date, '계좌': account || 'N/A', '종목명': stock?.name || 'N/A', '티커': stock?.ticker || 'N/A', '구분': trade.tradeType === TradeType.Buy ? '매수' : '매도', '수량': quantity, '단가': price, '금액': quantity * price, '매매방법': trade.tradeMethod };
+            return { '일자': trade.date, '계좌': account || 'N/A', '종목명': stock?.name || 'N/A', '티커': stock?.ticker || 'N/A', '구분': trade.tradeType === TradeType.Buy ? '매수' : '매도', '수량': quantity, '단가': price, '금액': quantity * price, '매매방법': trade.tradeMethod, '목표': trade.goalId ? goalMap.get(trade.goalId) : '' };
         })
     });
     
     const allAccountsMap = new Map<string, string>();
     (accounts || []).forEach(a => allAccountsMap.set(a.id, a.name));
     (bankAccounts || []).forEach(b => allAccountsMap.set(b.id, `${b.bankName} ${b.name}`));
-
+    
     const regularTransactions = (transactions || []).filter(t => t.transactionType !== TransactionType.Dividend);
     const dividendTransactions = (transactions || []).filter(t => t.transactionType === TransactionType.Dividend);
     
-    sheets.push({ name: '입출금기록', data: regularTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(t => ({ '일자': t.date, '계좌': allAccountsMap.get(t.accountId) || 'N/A', '구분': t.transactionType === TransactionType.Deposit ? '입금' : '출금', '금액': Number(t.amount) || 0, '상대계좌': t.counterpartyAccountId ? allAccountsMap.get(t.counterpartyAccountId) : '외부' })) });
-    
-    sheets.push({ name: '배당금기록', data: dividendTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(t => {
-        const stock = t.stockId ? stockMap.get(t.stockId) : undefined;
-        return { '일자': t.date, '계좌': allAccountsMap.get(t.accountId) || 'N/A', '종목명': stock ? stock.name : 'N/A', '티커': stock ? stock.ticker : 'N/A', '금액': Number(t.amount) || 0 };
-    }) });
-    
-    sheets.push({ name: '월말결산', data: (monthlyValues || []).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(mv => ({ '기준일': mv.date, '계좌총액': Number(mv.totalValue) || 0 })) });
-    
-    sheets.push({ name: '초기손익기록', data: (historicalGains || []).map(hg => ({ '일자': hg.date, '계좌명': accountMap.get(hg.accountId) || 'N/A', '종목명': hg.stockName, '실현손익': hg.realizedPnl, '메모': hg.note || '' })) });
+    sheets.push({
+        name: '입출금기록',
+        data: regularTransactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(tx => ({
+            '일자': tx.date,
+            '계좌': allAccountsMap.get(tx.accountId) || 'N/A',
+            '구분': tx.transactionType === TransactionType.Deposit ? '입금' : '출금',
+            '금액': tx.amount,
+            '상대계좌': tx.counterpartyAccountId ? allAccountsMap.get(tx.counterpartyAccountId) : '외부',
+            '목표': tx.goalId ? goalMap.get(tx.goalId) : ''
+        }))
+    });
 
-    const stockMapForGains = new Map<string, Stock>((stocks || []).map(s => [s.id, s]));
-    const tradesByStock = (trades || []).reduce((acc, trade) => {
-      if (!acc[trade.stockId]) acc[trade.stockId] = [];
-      acc[trade.stockId].push(trade);
-      return acc;
-    }, {} as Record<string, Trade[]>);
-    
-    const realizedGainsData: any[] = [];
-    for (const stockId in tradesByStock) {
-      const stock = stockMapForGains.get(stockId);
-      if (!stock) continue;
-      const stockTrades = tradesByStock[stockId];
-      const totalBuyQty = stockTrades.filter(t => t.tradeType === TradeType.Buy).reduce((sum, t) => sum + Number(t.quantity), 0);
-      const totalSellQty = stockTrades.filter(t => t.tradeType === TradeType.Sell).reduce((sum, t) => sum + Number(t.quantity), 0);
-      if (Math.abs(totalBuyQty - totalSellQty) < 1e-9 && totalSellQty > 0) { // Position closed
-        const totalBuyCost = stockTrades.filter(t => t.tradeType === TradeType.Buy).reduce((sum, t) => sum + (Number(t.quantity) * Number(t.price)), 0);
-        const totalSellProceeds = stockTrades.filter(t => t.tradeType === TradeType.Sell).reduce((sum, t) => sum + (Number(t.quantity) * Number(t.price)), 0);
-        const realizedPnl = totalSellProceeds - totalBuyCost;
-        realizedGainsData.push({ stockName: stock.name, totalBuyCost, totalSellProceeds, realizedPnl, pnlRate: totalBuyCost > 0 ? (realizedPnl / totalBuyCost) * 100 : 0 });
-      }
-    }
-    
-    sheets.push({ name: '실현손익', data: realizedGainsData.sort((a, b) => b.realizedPnl - a.realizedPnl).map(item => ({ '종목명': item.stockName, '총 매수금액': item.totalBuyCost, '총 매도금액': item.totalSellProceeds, '실현손익': item.realizedPnl, '수익률 (%)': item.pnlRate })) });
-    
-    const stockInfoMap = new Map((stocks || []).map(s => [s.id, { ticker: s.ticker, name: s.name }]));
-    const alertThresholdsData = [];
-    if (alertThresholds?.global) {
-        alertThresholdsData.push({
-            '구분': '전체',
-            '종목명': '',
-            'ID(티커)': '',
-            '주의 기준 (%)': alertThresholds.global.caution,
-            '경고 기준 (%)': alertThresholds.global.warning,
-        });
-    }
-    if (alertThresholds?.stocks) {
-        for (const stockId in alertThresholds.stocks) {
-            const thresholds = alertThresholds.stocks[stockId];
-            if (thresholds && (thresholds.caution !== undefined || thresholds.warning !== undefined)) {
-                const stockInfo = stockInfoMap.get(stockId);
-                alertThresholdsData.push({
-                    '구분': '개별 종목',
-                    '종목명': stockInfo?.name || '알 수 없는 종목',
-                    'ID(티커)': stockInfo?.ticker || `ID:${stockId}`,
-                    '주의 기준 (%)': thresholds.caution,
-                    '경고 기준 (%)': thresholds.warning,
-                });
-            }
+    sheets.push({
+        name: '배당금기록',
+        data: dividendTransactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(tx => {
+            const stock = tx.stockId ? stockMap.get(tx.stockId) : null;
+            return {
+                '일자': tx.date,
+                '계좌': allAccountsMap.get(tx.accountId) || 'N/A',
+                '종목명': stock?.name || 'N/A',
+                '티커': stock?.ticker || 'N/A',
+                '금액': tx.amount,
+            };
+        })
+    });
+
+    sheets.push({
+        name: '월말결산',
+        data: (monthlyValues || []).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(mv => ({
+            '기준일': mv.date,
+            '계좌총액': mv.totalValue,
+        }))
+    });
+
+    sheets.push({
+        name: '초기손익기록',
+        data: (historicalGains || []).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(hg => ({
+            '일자': hg.date,
+            '계좌명': accountMap.get(hg.accountId) || 'N/A',
+            '종목명': hg.stockName,
+            '실현손익': hg.realizedPnl,
+            '메모': hg.note || ''
+        }))
+    });
+
+    // FIX: Explicitly type `alertSettingsData` to allow for both number and string types in its properties.
+    // This resolves a TypeScript error where the array type was inferred as `number` from the first element,
+    // causing a conflict when later pushing elements with `string` values for the same properties.
+    const alertSettingsData: {
+      '구분': string;
+      'ID'?: string;
+      'ID(티커)'?: string;
+      '주의 기준 (%)': number | string;
+      '경고 기준 (%)': number | string;
+    }[] = [
+        { '구분': '전체', 'ID': 'global', '주의 기준 (%)': alertThresholds.global.caution, '경고 기준 (%)': alertThresholds.global.warning }
+    ];
+    for (const stockId in (alertThresholds.stocks || {})) {
+        const stock = stockMap.get(stockId);
+        if (stock) {
+            alertSettingsData.push({
+                '구분': '개별 종목',
+                'ID(티커)': stock.ticker,
+                '주의 기준 (%)': alertThresholds.stocks[stockId]?.caution ?? '',
+                '경고 기준 (%)': alertThresholds.stocks[stockId]?.warning ?? ''
+            });
         }
     }
-    sheets.push({ name: '리밸런싱알림설정', data: alertThresholdsData });
-    
-    const appSettingsData = [
-        { '설정명': '백그라운드 조회 주기 (분)', '설정값': backgroundFetchInterval },
+    sheets.push({ name: '리밸런싱알림설정', data: alertSettingsData });
+
+    // FIX: Convert all '설정값' values to strings to ensure consistent typing within the array,
+    // which resolves a TypeScript error likely caused by the xlsx library's type inference.
+    sheets.push({ name: '앱설정', data: [
+        { '설정명': '백그라운드 조회 주기 (분)', '설정값': String(backgroundFetchInterval) },
         { '설정명': '홈 화면 요약 정보 표시', '설정값': showSummary ? '예' : '아니오' }
-    ];
-    sheets.push({ name: '앱설정', data: appSettingsData });
-    
-    if (sheets.length > 0) {
-        exportToExcel(sheets, fileName);
-    } else {
-        alert('내보낼 데이터가 없습니다.');
-    }
+    ]});
+
+    exportToExcel(sheets, fileName);
 };

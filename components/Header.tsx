@@ -21,6 +21,8 @@ const screenTitles: Record<Screen, string> = {
   [Screen.Rebalancing]: '포트폴리오 리밸런싱',
   [Screen.Menu]: '전체 메뉴',
   [Screen.HoldingsStatus]: '포트폴리오 가꾸기',
+  // FIX: Added missing GOAL_INVESTING to screenTitles
+  [Screen.GoalInvesting]: '목표 달성',
 };
 
 const Header: React.FC<HeaderProps> = ({ theme, toggleTheme, currentScreen, onOpenExitModal }) => {

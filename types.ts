@@ -16,6 +16,7 @@ export const Screen = {
   MonthlyHistory: 'MONTHLY_HISTORY',
   Rebalancing: 'REBALANCING',
   Menu: 'MENU',
+  GoalInvesting: 'GOAL_INVESTING',
   HoldingsStatus: 'HOLDINGS_STATUS',
 } as const;
 export type Screen = typeof Screen[keyof typeof Screen];
@@ -79,6 +80,7 @@ export interface Trade {
   price: number;
   tradeType: TradeType;
   tradeMethod: string; // e.g. 'Online', 'Mobile'
+  goalId?: string;
 }
 
 export interface AccountTransaction {
@@ -89,6 +91,16 @@ export interface AccountTransaction {
   transactionType: TransactionType;
   counterpartyAccountId?: string;
   stockId?: string;
+  goalId?: string;
+}
+
+export interface InvestmentGoal {
+  id: string;
+  name: string;
+  creationDate: string; // YYYY-MM-DD
+  goalType: 'amount' | 'shares';
+  targetAmount?: number;
+  targetShares?: { [stockId: string]: number };
 }
 
 export interface InitialPortfolio {

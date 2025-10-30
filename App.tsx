@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Screen, Theme, TradeType, Account, Broker, Stock, Trade, AccountTransaction, BankAccount, InitialPortfolio, MonthlyAccountValue, PortfolioCategory, HistoricalGain, AlertThresholds, TransactionType } from './types';
+import { Screen, Theme, TradeType, Account, Broker, Stock, Trade, AccountTransaction, BankAccount, InitialPortfolio, MonthlyAccountValue, PortfolioCategory, HistoricalGain, AlertThresholds, TransactionType, InvestmentGoal } from './types';
 import HomeScreen from './screens/HomeScreen';
 import StockStatusScreen from './screens/StockStatusScreen';
 import AccountStatusScreen from './screens/AccountStatusScreen';
@@ -11,6 +11,7 @@ import IndexScreen from './screens/IndexScreen';
 import RebalancingScreen from './screens/RebalancingScreen';
 import MenuScreen from './screens/MenuScreen';
 import HoldingsStatusScreen from './screens/HoldingsStatusScreen';
+import GoalInvestingScreen from './screens/GoalInvestingScreen';
 import PasswordScreen from './screens/PasswordScreen';
 import BottomNav from './components/BottomNav';
 import Header from './components/Header';
@@ -220,6 +221,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
   const [historicalGains, setHistoricalGains] = useLocalStorage<HistoricalGain[]>('historicalGains', []);
   const [alertThresholds, setAlertThresholds] = useLocalStorage<AlertThresholds>('alertThresholds', DEFAULT_ALERT_THRESHOLDS);
   const [homeScreenPreference, setHomeScreenPreference] = useLocalStorage<'HOME' | 'HOLDINGS_STATUS'>('homeScreenPreference', Screen.HoldingsStatus);
+  const [investmentGoals, setInvestmentGoals] = useLocalStorage<InvestmentGoal[]>('investmentGoals', []);
 
 
   const [animationClass, setAnimationClass] = useState('');
@@ -342,9 +344,10 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         setTransactions([]);
         setMonthlyValues([]);
         setHistoricalGains([]);
+        setInvestmentGoals([]);
         localStorage.setItem('has_launched_before', 'true');
     }
-  }, [setBrokers, setAccounts, setStocks, setInitialPortfolio, setBankAccounts, setTrades, setTransactions, setMonthlyValues, setHistoricalGains]);
+  }, [setBrokers, setAccounts, setStocks, setInitialPortfolio, setBankAccounts, setTrades, setTransactions, setMonthlyValues, setHistoricalGains, setInvestmentGoals]);
 
   const stockMap = useMemo(() => new Map((stocks || []).map(s => [s.id, s])), [stocks]);
   const securityAccountIds = useMemo(() => new Set((accounts || []).map(a => a.id)), [accounts]);
@@ -505,6 +508,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             alertThresholds,
             backgroundFetchInterval,
             showSummary,
+            investmentGoals,
             `투자 관리 앱 전체 데이터_${new Date().toISOString().split('T')[0]}`
         );
     }
@@ -513,14 +517,17 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
     }, 500);
   };
   
+  const mainPortfolioTrades = useMemo(() => (trades || []).filter(t => !t.goalId), [trades]);
+  const mainPortfolioTransactions = useMemo(() => (transactions || []).filter(t => !t.goalId), [transactions]);
+
   const totalCashBalance = useMemo(() => {
     let totalCash = 0;
     (accounts || []).forEach(account => {
-        const accountTrades = (trades || []).filter(t => t.accountId === account.id);
+        const accountTrades = mainPortfolioTrades.filter(t => t.accountId === account.id);
         const totalBuyCost = accountTrades.filter(t => t.tradeType === TradeType.Buy).reduce((sum, t) => sum + (Number(t.price) || 0) * (Number(t.quantity) || 0), 0);
         const totalSellProceeds = accountTrades.filter(t => t.tradeType === TradeType.Sell).reduce((sum, t) => sum + (Number(t.price) || 0) * (Number(t.quantity) || 0), 0);
         let netCashFromTransactions = 0;
-        (transactions || []).forEach(t => {
+        mainPortfolioTransactions.forEach(t => {
             const amount = Number(t.amount) || 0;
             if (t.accountId === account.id && (t.transactionType === TransactionType.Deposit || t.transactionType === TransactionType.Dividend)) {
                 netCashFromTransactions += amount;
@@ -542,11 +549,11 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         totalCash += cashBalance;
     });
     return totalCash;
-  }, [accounts, trades, transactions, historicalGains]);
+  }, [accounts, mainPortfolioTrades, mainPortfolioTransactions, historicalGains]);
 
 
   const netExternalDeposits = useMemo(() => {
-    return (transactions || []).reduce((acc, t) => {
+    return mainPortfolioTransactions.reduce((acc, t) => {
         if (t.transactionType === TransactionType.Dividend) {
             return acc;
         }
@@ -562,11 +569,11 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         }
         return acc;
     }, 0);
-  }, [transactions, securityAccountIds]);
+  }, [mainPortfolioTransactions, securityAccountIds]);
   
   const financialSummary = useMemo(() => {
     const holdings: { [stockId: string]: { quantity: number } } = {};
-    for (const trade of (trades || [])) {
+    for (const trade of mainPortfolioTrades) {
       if (!trade || !trade.stockId) continue;
       const quantity = Number(trade.quantity) || 0;
       if (!holdings[trade.stockId]) holdings[trade.stockId] = { quantity: 0 };
@@ -595,7 +602,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
     const ccr = netExternalDeposits > 0 ? (profitLoss / netExternalDeposits) * 100 : 0;
     
     const cashFlows: { amount: number; date: Date }[] = [];
-    (transactions || []).forEach(t => {
+    mainPortfolioTransactions.forEach(t => {
         if (t.transactionType === TransactionType.Dividend) return;
         if (t.counterpartyAccountId && securityAccountIds.has(t.counterpartyAccountId)) return;
         const amount = Number(t.amount) || 0;
@@ -622,7 +629,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
     if (lastYearValues.length > 0) {
         startOfYearAssets = Number(lastYearValues[0].totalValue) || 0;
     } else {
-        startOfYearAssets = (transactions || [])
+        startOfYearAssets = mainPortfolioTransactions
             .filter(t => {
                 if (new Date(t.date) >= startOfCurrentYear) return false;
                 if (t.transactionType === TransactionType.Dividend) return false;
@@ -637,7 +644,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             }, 0);
     }
     
-    const netInflowThisYear = (transactions || [])
+    const netInflowThisYear = mainPortfolioTransactions
         .filter(t => {
             if (new Date(t.date).getFullYear() !== currentYear) return false;
             if (t.transactionType === TransactionType.Dividend) return false;
@@ -654,7 +661,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
     const ytdProfit = totalAssets - startOfYearAssets - netInflowThisYear;
     const ytdBase = startOfYearAssets + netInflowThisYear;
     const ytd = ytdBase > 0 ? (ytdProfit / ytdBase) * 100 : 0;
-    const twrr = calculateTWRR(monthlyValues, transactions, securityAccountIds);
+    const twrr = calculateTWRR(monthlyValues, mainPortfolioTransactions, securityAccountIds);
     const portfolioStockIds = new Set((stocks || []).filter(s => s.isPortfolio).map(s => s.id));
     
     let totalPortfolioStockValue = 0;
@@ -718,7 +725,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
       allStocks: individualStocksWithDetails,
       totalPortfolioValue: totalPortfolioStockValue,
     };
-  }, [trades, transactions, stocks, stockPrices, stockMap, initialPortfolio, totalCashBalance, netExternalDeposits, monthlyValues, securityAccountIds, accounts, historicalGains]);
+  }, [mainPortfolioTrades, mainPortfolioTransactions, stocks, stockPrices, stockMap, initialPortfolio, totalCashBalance, netExternalDeposits, monthlyValues, securityAccountIds, accounts, historicalGains]);
 
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'granted' && financialSummary) {
@@ -802,13 +809,14 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           alertThresholds={alertThresholds}
         />;
       case Screen.TradeHistory:
-        return <TradeHistoryScreen trades={trades} setTrades={setTrades} accounts={accounts} stocks={stocks} />;
+        return <TradeHistoryScreen trades={trades} setTrades={setTrades} accounts={accounts} stocks={stocks} investmentGoals={investmentGoals} />;
       case Screen.AccountTransactions:
         return <AccountTransactionsScreen 
           transactions={transactions} 
           setTransactions={setTransactions} 
           accounts={accounts}
           bankAccounts={bankAccounts}
+          investmentGoals={investmentGoals}
         />;
       case Screen.ProfitManagement:
         return <ProfitManagementScreen
@@ -827,6 +835,16 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           setMonthlyValues={setMonthlyValues}
           transactions={transactions}
         />;
+      case Screen.GoalInvesting:
+        return <GoalInvestingScreen
+          investmentGoals={investmentGoals}
+          trades={trades}
+          setTrades={setTrades}
+          transactions={transactions}
+          stocks={stocks}
+          stockPrices={stockPrices}
+          accounts={accounts}
+        />;
       case Screen.Index:
         return <IndexScreen 
             appVersion={appVersion}
@@ -840,6 +858,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
             transactions={transactions}
             monthlyValues={monthlyValues} setMonthlyValues={setMonthlyValues}
             historicalGains={historicalGains}
+            investmentGoals={investmentGoals} setInvestmentGoals={setInvestmentGoals}
             setIsDataOperationInProgress={setIsDataOperationInProgress}
             onForceRemount={onForceRemount}
             backgroundFetchInterval={backgroundFetchInterval}

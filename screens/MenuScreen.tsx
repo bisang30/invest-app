@@ -8,7 +8,8 @@ import {
   CalendarDaysIcon, 
   Cog8ToothIcon, 
   ChevronDownIcon,
-  ChartPieIcon
+  ChartPieIcon,
+  FlagIcon
 } from '../components/Icons';
 
 interface MenuScreenProps {
@@ -40,6 +41,14 @@ const MenuScreen: React.FC<MenuScreenProps> = ({ setCurrentScreen }) => {
       icon: ChartPieIcon,
       color: 'text-violet-500',
       bgColor: 'bg-violet-100 dark:bg-violet-900/50'
+    },
+    {
+      screen: Screen.GoalInvesting,
+      label: '목표 달성',
+      description: '설정한 투자 목표의 달성 현황을 추적합니다.',
+      icon: FlagIcon,
+      color: 'text-lime-500',
+      bgColor: 'bg-lime-100 dark:bg-lime-900/50'
     },
     {
       screen: Screen.ProfitManagement,

@@ -1,17 +1,17 @@
-
 import React, { useState, useMemo } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
-import { AccountTransaction, TransactionType, Account, BankAccount } from '../types';
+import { AccountTransaction, TransactionType, Account, BankAccount, InvestmentGoal } from '../types';
 
 interface AccountTransactionsScreenProps {
   transactions: AccountTransaction[];
   setTransactions: React.Dispatch<React.SetStateAction<AccountTransaction[]>>;
   accounts: Account[];
   bankAccounts: BankAccount[];
+  investmentGoals: InvestmentGoal[];
 }
 
 const formatCurrency = (value: number) => new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(value);
@@ -25,7 +25,7 @@ const formatNumber = (value: number | string): string => {
 
 type SortKey = keyof AccountTransaction | 'accountName' | 'counterpartyAccountName';
 
-const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ transactions, setTransactions, accounts, bankAccounts }) => {
+const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ transactions, setTransactions, accounts, bankAccounts, investmentGoals }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<AccountTransaction | null>(null);
   const [formState, setFormState] = useState<Omit<AccountTransaction, 'id'>>({
@@ -34,6 +34,7 @@ const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ t
     amount: 0,
     transactionType: TransactionType.Deposit,
     counterpartyAccountId: undefined,
+    goalId: undefined,
   });
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -164,7 +165,7 @@ const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ t
       const numValue = parseFloat(value.replace(/,/g, ''));
       setFormState(prev => ({ ...prev, [name]: isNaN(numValue) ? 0 : numValue }));
     } else {
-      if (name === 'counterpartyAccountId') {
+      if (name === 'counterpartyAccountId' || name === 'goalId') {
         setFormState(prev => ({...prev, [name]: value === '' ? undefined : value}));
       } else {
         setFormState(prev => ({ ...prev, [name]: value }));
@@ -180,6 +181,7 @@ const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ t
       amount: 0,
       transactionType: TransactionType.Deposit,
       counterpartyAccountId: undefined,
+      goalId: undefined,
     });
     setIsModalOpen(true);
   };
@@ -192,6 +194,7 @@ const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ t
       amount: transaction.amount,
       transactionType: transaction.transactionType,
       counterpartyAccountId: transaction.counterpartyAccountId,
+      goalId: transaction.goalId,
     });
     setIsModalOpen(true);
   };
@@ -229,7 +232,7 @@ const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ t
         (prev || []).map(t => (t.id === editingTransaction.id ? updatedTransaction : t))
       );
     } else {
-      setTransactions(prev => [{ ...transactionToSave, id: Date.now().toString() }, ...(prev || [])]);
+      setTransactions(prev => [{ ...transactionToSave, id: Date.now().toString() } as AccountTransaction, ...(prev || [])]);
     }
     
     handleCloseModal();
@@ -416,7 +419,7 @@ const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ t
             <option value={TransactionType.Deposit}>입금</option>
             <option value={TransactionType.Withdrawal}>출금</option>
           </Select>
-          <Input label="금액" id="amount" name="amount" type="text" inputMode="numeric" value={formatNumber(formState.amount)} onChange={handleInputChange} required />
+          <Input label="금액" id="amount" name="amount" type="text" inputMode="numeric" value={formatNumber(formState.amount || 0)} onChange={handleInputChange} required />
            <Select label="상대계좌 (선택)" id="counterpartyAccountId" name="counterpartyAccountId" value={formState.counterpartyAccountId || ''} onChange={handleInputChange}>
             <option value="">없음 (외부 입출금)</option>
             <optgroup label="증권계좌">
@@ -425,6 +428,10 @@ const AccountTransactionsScreen: React.FC<AccountTransactionsScreenProps> = ({ t
             <optgroup label="은행계좌">
               {(bankAccounts || []).map(bacc => <option key={bacc.id} value={bacc.id}>{bacc.bankName} {bacc.name}</option>)}
             </optgroup>
+          </Select>
+          <Select label="투자 구분" id="goalId" name="goalId" value={formState.goalId || ''} onChange={handleInputChange}>
+            <option value="">자산배분 포트폴리오</option>
+            {(investmentGoals || []).map(goal => <option key={goal.id} value={goal.id}>{goal.name}</option>)}
           </Select>
           <div className="flex justify-between items-center pt-4">
             <div>

@@ -4,13 +4,13 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
-import { Broker, Account, Stock, InitialPortfolio, PortfolioCategory, Trade, AccountTransaction, BankAccount, Theme, TradeType, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds, Screen } from '../types';
+import { Broker, Account, Stock, InitialPortfolio, PortfolioCategory, Trade, AccountTransaction, BankAccount, Theme, TradeType, TransactionType, MonthlyAccountValue, HistoricalGain, AlertThresholds, Screen, InvestmentGoal } from '../types';
 import { PORTFOLIO_CATEGORIES, DATA_VERSION } from '../constants';
 import { exportAllData } from '../services/exportService';
 import * as XLSX from 'xlsx';
 import { 
   ChevronUpIcon, ChevronDownIcon, BuildingOffice2Icon, IdentificationIcon, BuildingLibraryIcon,
-  ChartBarIcon, ChartPieIcon, CircleStackIcon, LockClosedIcon, Cog8ToothIcon, BellAlertIcon
+  ChartBarIcon, ChartPieIcon, CircleStackIcon, LockClosedIcon, Cog8ToothIcon, BellAlertIcon, FlagIcon
 } from '../components/Icons';
 
 const findValidXlsxLibrary = (mod: any): any | null => {
@@ -55,6 +55,14 @@ interface StockFormState extends Omit<Stock, 'id' | 'expenseRatio'> {
   expenseRatio: string;
 }
 
+const formatNumber = (value: number | string): string => {
+  if (value === '' || value === null || value === undefined || Number(value) === 0) return '';
+  const num = Number(String(value).replace(/,/g, ''));
+  if (isNaN(num)) return '';
+  return num.toLocaleString('ko-KR');
+};
+
+
 // FIX: Define IndexScreenProps interface to resolve 'Cannot find name' error.
 interface IndexScreenProps {
   appVersion: string;
@@ -85,6 +93,8 @@ interface IndexScreenProps {
   setAlertThresholds: React.Dispatch<React.SetStateAction<AlertThresholds>>;
   homeScreenPreference: 'HOME' | 'HOLDINGS_STATUS';
   setHomeScreenPreference: React.Dispatch<React.SetStateAction<'HOME' | 'HOLDINGS_STATUS'>>;
+  investmentGoals: InvestmentGoal[];
+  setInvestmentGoals: React.Dispatch<React.SetStateAction<InvestmentGoal[]>>;
 }
 
 interface SettingsSectionProps {
@@ -141,6 +151,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   historicalGains,
   alertThresholds, setAlertThresholds,
   homeScreenPreference, setHomeScreenPreference,
+  investmentGoals, setInvestmentGoals,
 }) => {
   const [openSection, setOpenSection] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState('');
@@ -164,6 +175,12 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [editingStock, setEditingStock] = useState<Stock | null>(null);
   const [stockForm, setStockForm] = useState<StockFormState>({ ticker: '', name: '', category: PortfolioCategory.Stock, isPortfolio: false, isEtf: false, expenseRatio: '' });
+
+  // Goal management modal state
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [editingGoal, setEditingGoal] = useState<InvestmentGoal | null>(null);
+  const [goalForm, setGoalForm] = useState<Omit<InvestmentGoal, 'id' | 'targetShares'>>({ name: '', goalType: 'amount', targetAmount: 0, creationDate: new Date().toISOString().split('T')[0] });
+  const [goalTargetShares, setGoalTargetShares] = useState<{ [key: string]: string }>({});
 
   // Portfolio state
   const [isPortfolioEditing, setIsPortfolioEditing] = useState(false);
@@ -492,6 +509,117 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
         }
     });
   };
+
+  // Goal Management Functions
+  const openGoalModal = (goal: InvestmentGoal | null) => {
+    if (goal) {
+      setEditingGoal(goal);
+      setGoalForm({ name: goal.name, goalType: goal.goalType || 'amount', targetAmount: goal.targetAmount || 0, creationDate: goal.creationDate || new Date().toISOString().split('T')[0] });
+      const stringShares: { [key: string]: string } = {};
+      if (goal.targetShares) {
+        Object.keys(goal.targetShares).forEach(stockId => {
+          stringShares[stockId] = String(goal.targetShares![stockId] || '');
+        });
+      }
+      setGoalTargetShares(stringShares);
+    } else {
+      setEditingGoal(null);
+      setGoalForm({ name: '', goalType: 'amount', targetAmount: 0, creationDate: new Date().toISOString().split('T')[0] });
+      setGoalTargetShares({});
+    }
+    setIsGoalModalOpen(true);
+  };
+  
+  const closeGoalModal = () => {
+    setIsGoalModalOpen(false);
+    setEditingGoal(null);
+  };
+
+  const handleGoalFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    if (name === 'targetAmount') {
+      const numValue = parseFloat(value.replace(/,/g, ''));
+      setGoalForm(prev => ({ ...prev, [name]: isNaN(numValue) ? 0 : numValue }));
+    } else {
+      setGoalForm(prev => ({ ...prev, [name]: value }));
+    }
+  };
+
+  const handleGoalSharesChange = (stockId: string, value: string) => {
+    if (value === '' || /^\d+$/.test(value)) {
+      setGoalTargetShares(prev => ({ ...prev, [stockId]: value }));
+    }
+  };
+
+  const handleSaveGoal = () => {
+    if (!goalForm.name.trim()) {
+      alert('목표 이름을 입력해주세요.');
+      return;
+    }
+
+    let goalData: Partial<InvestmentGoal> = { name: goalForm.name, goalType: goalForm.goalType, creationDate: goalForm.creationDate };
+
+    if (goalForm.goalType === 'amount') {
+      if (goalForm.targetAmount! <= 0) {
+        alert('목표 금액을 올바르게 입력해주세요.');
+        return;
+      }
+      goalData.targetAmount = goalForm.targetAmount;
+      goalData.targetShares = undefined;
+    } else { // 'shares'
+      const newTargetShares: { [stockId: string]: number } = {};
+      for (const stockId in goalTargetShares) {
+        const shares = parseInt(goalTargetShares[stockId], 10);
+        if (!isNaN(shares) && shares > 0) {
+          newTargetShares[stockId] = shares;
+        }
+      }
+      if (Object.keys(newTargetShares).length === 0) {
+        alert('목표 수량을 1개 이상 종목에 설정해주세요.');
+        return;
+      }
+      goalData.targetShares = newTargetShares;
+      goalData.targetAmount = undefined;
+    }
+
+    if (editingGoal) {
+      setInvestmentGoals(prev => (prev || []).map(g => g.id === editingGoal.id ? { ...g, ...goalData } as InvestmentGoal : g));
+    } else {
+      const newGoal: InvestmentGoal = {
+        ...goalData,
+        id: Date.now().toString(),
+      } as InvestmentGoal;
+      setInvestmentGoals(prev => [...(prev || []), newGoal]);
+    }
+    closeGoalModal();
+  };
+
+  const handleDeleteGoal = (goalId: string) => {
+    const goalToDelete = (investmentGoals || []).find(g => g.id === goalId);
+    if (!goalToDelete) return;
+  
+    setConfirmation({
+      isOpen: true,
+      title: '투자 목표 삭제',
+      message: `'${goalToDelete.name}' 목표를 삭제하시겠습니까? 이 목표와 연결된 모든 매매 및 입출금 기록은 '자산배분 포트폴리오'로 이동됩니다.`,
+      confirmText: '삭제',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        // Find trades and transactions associated with the goal and unset their goalId
+        // This is not implemented in setTrades/setTransactions, so I will do it manually.
+        const updatedTrades = (trades || []).map(t => t.goalId === goalId ? { ...t, goalId: undefined } : t);
+        const updatedTransactions = (transactions || []).map(t => t.goalId === goalId ? { ...t, goalId: undefined } : t);
+        localStorage.setItem('trades', JSON.stringify(updatedTrades));
+        localStorage.setItem('transactions', JSON.stringify(updatedTransactions));
+  
+        setInvestmentGoals(prev => (prev || []).filter(g => g.id !== goalId));
+        closeConfirmationModal();
+
+        // Force remount to reflect changes in calculations
+        setTimeout(() => onForceRemount(), 100);
+      }
+    });
+  };
   
   const handlePortfolioInputChange = (stockId: string, value: string) => {
     if (value === '' || /^\d*\.?\d*$/.test(value)) {
@@ -632,7 +760,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   const LOCAL_STORAGE_KEYS = [
     'theme', 'app-password', 'brokers', 'accounts', 'stocks', 'trades',
     'transactions', 'initialPortfolio', 'monthlyValues', 'data-version', 'bankAccounts',
-    'historicalGains', 'alertThresholds', 'backgroundFetchInterval', 'showSummary'
+    'historicalGains', 'alertThresholds', 'backgroundFetchInterval', 'showSummary', 'investmentGoals'
   ];
   
   // --- Data Import from Excel ---
@@ -683,7 +811,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           return xlsxLib.utils.sheet_to_json(ws);
       };
 
-      setImportStatus('데이터 변환 중 (1/11): 증권사...');
+      setImportStatus('데이터 변환 중 (1/13): 증권사...');
       const brokersData = safeSheetToJSON(workbook, '증권사');
       const newBrokers: Broker[] = [];
       const brokerNameToIdMap = new Map<string, string>();
@@ -696,7 +824,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      setImportStatus('데이터 변환 중 (2/11): 은행계좌...');
+      setImportStatus('데이터 변환 중 (2/13): 은행계좌...');
       const bankAccountsData = safeSheetToJSON(workbook, '은행계좌');
       const newBankAccounts: BankAccount[] = [];
       const bankAccountIdentifierToIdMap = new Map<string, string>();
@@ -713,7 +841,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      setImportStatus('데이터 변환 중 (3/11): 증권계좌...');
+      setImportStatus('데이터 변환 중 (3/13): 증권계좌...');
       const accountsData = safeSheetToJSON(workbook, '증권계좌');
       const newAccounts: Account[] = [];
       const accountNameToIdMap = new Map<string, string>();
@@ -728,7 +856,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      setImportStatus('데이터 변환 중 (4/11): 종목...');
+      setImportStatus('데이터 변환 중 (4/13): 종목...');
       const stocksData = safeSheetToJSON(workbook, '종목');
       const newStocks: Stock[] = [];
       const stockTickerToIdMap = new Map<string, string>();
@@ -746,8 +874,40 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
               stockTickerToIdMap.set(ticker, newId);
           }
       });
+      
+      setImportStatus('데이터 변환 중 (5/13): 투자 목표...');
+      const goalsData = safeSheetToJSON(workbook, '투자 목표');
+      const newGoals: InvestmentGoal[] = [];
+      const goalNameToIdMap = new Map<string, string>();
+      goalsData.forEach(row => {
+        const name = row['목표명']?.trim();
+        if (name && !goalNameToIdMap.has(name)) {
+            const newId = `goal-${Date.now()}-${Math.random()}`;
+            goalNameToIdMap.set(name, newId);
+            const creationDate = row['생성일'] instanceof Date ? row['생성일'].toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+            const goalType = row['목표유형'] === '수량' ? 'shares' : 'amount';
+            const targetAmount = goalType === 'amount' ? parseFloat(row['목표금액']) : undefined;
+            newGoals.push({ id: newId, name, creationDate, goalType, targetAmount, targetShares: goalType === 'shares' ? {} : undefined });
+        }
+      });
 
-      setImportStatus('데이터 변환 중 (5/11): 포트폴리오...');
+      setImportStatus('데이터 변환 중 (6/13): 목표-종목수량...');
+      const goalSharesData = safeSheetToJSON(workbook, '목표-종목수량');
+      goalSharesData.forEach(row => {
+        const goalName = row['목표명']?.trim();
+        const ticker = row['티커']?.trim().toUpperCase();
+        const targetShares = parseInt(row['목표수량'], 10);
+        const goalId = goalNameToIdMap.get(goalName);
+        const stockId = stockTickerToIdMap.get(ticker);
+        if (goalId && stockId && !isNaN(targetShares)) {
+          const goal = newGoals.find(g => g.id === goalId);
+          if (goal && goal.targetShares) {
+            goal.targetShares[stockId] = targetShares;
+          }
+        }
+      });
+
+      setImportStatus('데이터 변환 중 (7/13): 포트폴리오...');
       const portfolioData = safeSheetToJSON(workbook, '포트폴리오');
       const newInitialPortfolio: InitialPortfolio = {};
       portfolioData.forEach(row => {
@@ -759,7 +919,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      setImportStatus('데이터 변환 중 (6/11): 매매기록...');
+      setImportStatus('데이터 변환 중 (8/13): 매매기록...');
       const tradesData = safeSheetToJSON(workbook, '매매기록');
       const newTrades: Trade[] = [];
       tradesData.forEach(row => {
@@ -770,20 +930,22 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
         const quantity = parseFloat(row['수량']);
         const price = parseFloat(row['단가']);
         const tradeMethod = row['매매방법']?.trim() || '직접매매';
+        const goalName = row['목표']?.trim();
 
         const accountId = accountNameToIdMap.get(accountName);
         const stockId = stockTickerToIdMap.get(ticker);
         const tradeType = tradeTypeStr === '매수' ? TradeType.Buy : TradeType.Sell;
+        const goalId = goalNameToIdMap.get(goalName);
 
         if (date && accountId && stockId && !isNaN(quantity) && !isNaN(price)) {
             newTrades.push({
                 id: `trade-${Date.now()}-${Math.random()}`,
-                date, accountId, stockId, quantity, price, tradeType, tradeMethod
+                date, accountId, stockId, quantity, price, tradeType, tradeMethod, goalId
             });
         }
       });
       
-      setImportStatus('데이터 변환 중 (7/11): 입출금 및 배당 기록...');
+      setImportStatus('데이터 변환 중 (9/13): 입출금 및 배당 기록...');
       const newTransactions: AccountTransaction[] = [];
       const allAccountsMapForImport = new Map([...accountNameToIdMap.entries(), ...bankAccountIdentifierToIdMap.entries()]);
       
@@ -795,15 +957,17 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           const txTypeStr = row['구분']?.trim();
           const amount = parseFloat(row['금액']);
           const counterpartyName = row['상대계좌']?.trim();
+          const goalName = row['목표']?.trim();
           
           const accountId = accountNameToIdMap.get(accountName);
           const transactionType = txTypeStr === '입금' ? TransactionType.Deposit : TransactionType.Withdrawal;
           const counterpartyAccountId = counterpartyName === '외부' ? undefined : allAccountsMapForImport.get(counterpartyName);
+          const goalId = goalNameToIdMap.get(goalName);
 
           if (date && accountId && !isNaN(amount)) {
               newTransactions.push({
                   id: `tx-${Date.now()}-${Math.random()}`,
-                  date, accountId, amount, transactionType, counterpartyAccountId
+                  date, accountId, amount, transactionType, counterpartyAccountId, goalId
               });
           }
       });
@@ -812,7 +976,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       const dividendsData = safeSheetToJSON(workbook, '배당금기록');
       dividendsData.forEach(row => {
           const date = row['일자'] instanceof Date ? row['일자'].toISOString().split('T')[0] : String(row['일자']);
-          const accountName = row['계좌']?.trim();
+          const accountName = row['계좌명']?.trim();
           const ticker = row['티커']?.trim().toUpperCase();
           const amount = parseFloat(row['금액']);
 
@@ -831,7 +995,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      setImportStatus('데이터 변환 중 (8/11): 월말결산...');
+      setImportStatus('데이터 변환 중 (10/13): 월말결산...');
       const monthlyValuesData = safeSheetToJSON(workbook, '월말결산');
       const newMonthlyValues: MonthlyAccountValue[] = [];
       monthlyValuesData.forEach(row => {
@@ -847,7 +1011,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      setImportStatus('데이터 변환 중 (9/11): 초기손익기록...');
+      setImportStatus('데이터 변환 중 (11/13): 초기손익기록...');
       const historicalGainsData = safeSheetToJSON(workbook, '초기손익기록');
       const newHistoricalGains: HistoricalGain[] = [];
       historicalGainsData.forEach(row => {
@@ -867,7 +1031,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      setImportStatus('데이터 변환 중 (10/11): 리밸런싱 알림...');
+      setImportStatus('데이터 변환 중 (12/13): 리밸런싱 알림...');
       const alertThresholdsData = safeSheetToJSON(workbook, '리밸런싱알림설정');
       const newAlertThresholds: AlertThresholds = {
           global: { caution: 3, warning: 5 },
@@ -892,7 +1056,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      setImportStatus('데이터 변환 중 (11/11): 앱 설정...');
+      setImportStatus('데이터 변환 중 (13/13): 앱 설정...');
       const appSettingsData = safeSheetToJSON(workbook, '앱설정');
       let newBackgroundFetchInterval = 30;
       let newShowSummary = true;
@@ -907,14 +1071,12 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
 
-      // FIX: The 'keysToClear' variable was not defined, causing a reference error.
-      // It is now defined by filtering LOCAL_STORAGE_KEYS to exclude user settings ('theme', 'app-password'),
-      // which should be preserved during a data import.
       const keysToClear = LOCAL_STORAGE_KEYS.filter(key => key !== 'theme' && key !== 'app-password');
       
       setImportStatus('데이터 저장 중...');
       keysToClear.forEach(key => localStorage.removeItem(key));
       
+      localStorage.setItem('investmentGoals', JSON.stringify(newGoals));
       localStorage.setItem('brokers', JSON.stringify(newBrokers));
       localStorage.setItem('bankAccounts', JSON.stringify(newBankAccounts));
       localStorage.setItem('accounts', JSON.stringify(newAccounts));
@@ -966,6 +1128,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       alertThresholds,
       backgroundFetchInterval,
       showSummary,
+      investmentGoals,
       `투자 관리 앱 전체 데이터_${new Date().toISOString().split('T')[0]}`
     );
   };
@@ -1020,6 +1183,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   ];
 
   const portfolioSections = [
+    { id: 'goals', title: '투자 목표 관리', icon: <FlagIcon className="w-6 h-6 text-lime-500" /> },
     { id: 'portfolio', title: '포트폴리오 비중 설정 (%)', icon: <ChartPieIcon className="w-6 h-6 text-cyan-500" /> },
     { id: 'alertSettings', title: '리밸런싱 알림 설정', icon: <BellAlertIcon className="w-6 h-6 text-orange-500" /> },
   ];
@@ -1029,7 +1193,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       { id: 'data', title: '데이터 관리', icon: <CircleStackIcon className="w-6 h-6 text-rose-500" /> },
       { id: 'password', title: '비밀번호 설정', icon: <LockClosedIcon className="w-6 h-6 text-red-500" /> },
   ];
-
+  
   return (
     <div className="space-y-8">
         <div>
@@ -1158,6 +1322,32 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
                         isOpen={openSection === section.id}
                         onToggle={() => toggleSection(section.id)}
                     >
+                        {section.id === 'goals' && (
+                            <>
+                                <div className="flex justify-end mb-4">
+                                <Button onClick={() => openGoalModal(null)}>새 목표 추가</Button>
+                                </div>
+                                <ul className="mt-4 space-y-2">
+                                {(investmentGoals || []).length === 0 ? (
+                                    <p className="text-center text-sm text-light-secondary dark:text-dark-secondary">등록된 투자 목표가 없습니다.</p>
+                                ) : (
+                                    (investmentGoals || []).map(g => (
+                                    <li key={g.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-slate-900/50 rounded">
+                                        <div>
+                                            <span className="font-semibold">{g.name}</span>
+                                            {g.goalType === 'amount' && g.targetAmount && <span className="text-sm text-light-secondary dark:text-dark-secondary ml-2">({formatNumber(g.targetAmount)}원)</span>}
+                                            {g.goalType === 'shares' && <span className="text-sm text-light-secondary dark:text-dark-secondary ml-2">(수량 목표)</span>}
+                                        </div>
+                                        <div className="flex gap-2">
+                                        <Button onClick={() => openGoalModal(g)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
+                                        <Button onClick={() => handleDeleteGoal(g.id)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button>
+                                        </div>
+                                    </li>
+                                    ))
+                                )}
+                                </ul>
+                            </>
+                        )}
                         {section.id === 'portfolio' && (
                            <>
                               {PORTFOLIO_CATEGORIES.map((category: string) => {
@@ -1500,6 +1690,47 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
               <Button type="submit">저장</Button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={isGoalModalOpen} onClose={closeGoalModal} title={editingGoal ? "투자 목표 수정" : "새 투자 목표 추가"}>
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+            <Input label="목표 이름" name="name" value={goalForm.name} onChange={e => setGoalForm(p => ({...p, name: e.target.value}))} required />
+            <Input label="시작일" name="creationDate" type="date" value={goalForm.creationDate} onChange={handleGoalFormChange} required />
+            <Select label="목표 유형" name="goalType" value={goalForm.goalType} onChange={handleGoalFormChange}>
+              <option value="amount">금액 목표</option>
+              <option value="shares">종목 수량 목표</option>
+            </Select>
+
+            {goalForm.goalType === 'amount' ? (
+              <Input label="목표 금액" name="targetAmount" type="text" inputMode="numeric" value={formatNumber(goalForm.targetAmount || 0)} onChange={handleGoalFormChange} required />
+            ) : (
+              <div className="pt-4 mt-4 border-t border-gray-200/50 dark:border-slate-700/50">
+                <h3 className="text-md font-semibold">목표 수량 설정</h3>
+                <p className="text-xs text-light-secondary dark:text-dark-secondary mb-3">
+                  이 목표를 위해 모을 종목별 주식 수를 입력하세요.
+                </p>
+                <div className="space-y-3 max-h-60 overflow-y-auto p-2 bg-gray-50 dark:bg-slate-900/50 rounded-lg">
+                  {(stocks || []).map(stock => (
+                    <div key={stock.id} className="grid grid-cols-3 gap-2 items-center">
+                      <label htmlFor={`goal-shares-${stock.id}`} className="text-sm col-span-2 truncate">{stock.name}</label>
+                      <Input 
+                        id={`goal-shares-${stock.id}`}
+                        type="text"
+                        inputMode="numeric"
+                        value={goalTargetShares[stock.id] || ''}
+                        onChange={(e) => handleGoalSharesChange(stock.id, e.target.value)}
+                        placeholder="주"
+                        label=""
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+        </div>
+        <div className="flex justify-end pt-6 border-t border-gray-200 dark:border-gray-700 mt-4">
+            <Button onClick={handleSaveGoal}>저장</Button>
+        </div>
       </Modal>
 
       <Modal isOpen={confirmation.isOpen} onClose={handleConfirmationCancel} title={confirmation.title}>

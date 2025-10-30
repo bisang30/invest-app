@@ -4,7 +4,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
-import { Trade, TradeType, Account, Stock } from '../types';
+import { Trade, TradeType, Account, Stock, InvestmentGoal } from '../types';
 import { ArrowDownCircleIcon, ArrowUpCircleIcon, Cog8ToothIcon, CalendarDaysIcon } from '../components/Icons';
 
 interface TradeHistoryScreenProps {
@@ -12,6 +12,7 @@ interface TradeHistoryScreenProps {
   setTrades: React.Dispatch<React.SetStateAction<Trade[]>>;
   accounts: Account[];
   stocks: Stock[];
+  investmentGoals: InvestmentGoal[];
 }
 
 interface TradeWithPL extends Trade {
@@ -28,7 +29,7 @@ const formatNumber = (value: number | string): string => {
   return num.toLocaleString('ko-KR');
 };
 
-const TradeHistoryScreen: React.FC<TradeHistoryScreenProps> = ({ trades, setTrades, accounts, stocks }) => {
+const TradeHistoryScreen: React.FC<TradeHistoryScreenProps> = ({ trades, setTrades, accounts, stocks, investmentGoals }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
   const [formState, setFormState] = useState<Omit<Trade, 'id'>>({
@@ -39,6 +40,7 @@ const TradeHistoryScreen: React.FC<TradeHistoryScreenProps> = ({ trades, setTrad
     price: 0,
     tradeType: TradeType.Buy,
     tradeMethod: '직접매매',
+    goalId: undefined,
   });
   
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -163,7 +165,10 @@ const TradeHistoryScreen: React.FC<TradeHistoryScreenProps> = ({ trades, setTrad
     if (name === 'quantity' || name === 'price') {
       const numValue = parseFloat(value.replace(/,/g, ''));
       setFormState(prev => ({ ...prev, [name]: isNaN(numValue) ? 0 : numValue }));
-    } else {
+    } else if (name === 'goalId') {
+      setFormState(prev => ({ ...prev, goalId: value === '' ? undefined : value }));
+    }
+    else {
       setFormState(prev => ({ ...prev, [name]: value }));
     }
   };
@@ -178,6 +183,7 @@ const TradeHistoryScreen: React.FC<TradeHistoryScreenProps> = ({ trades, setTrad
       price: 0,
       tradeType: TradeType.Buy,
       tradeMethod: '직접매매',
+      goalId: undefined,
     });
     setIsModalOpen(true);
   };
@@ -192,6 +198,7 @@ const TradeHistoryScreen: React.FC<TradeHistoryScreenProps> = ({ trades, setTrad
       price: trade.price,
       tradeType: trade.tradeType,
       tradeMethod: trade.tradeMethod,
+      goalId: trade.goalId,
     });
     setIsModalOpen(true);
   };
@@ -371,6 +378,10 @@ const TradeHistoryScreen: React.FC<TradeHistoryScreenProps> = ({ trades, setTrad
           <Select label="매매방법" id="tradeMethod" name="tradeMethod" value={formState.tradeMethod} onChange={handleInputChange} required>
             <option value="직접매매">직접매매</option>
             <option value="자동매매">자동매매</option>
+          </Select>
+          <Select label="투자 구분" id="goalId" name="goalId" value={formState.goalId || ''} onChange={handleInputChange}>
+            <option value="">자산배분 포트폴리오</option>
+            {(investmentGoals || []).map(goal => <option key={goal.id} value={goal.id}>{goal.name}</option>)}
           </Select>
           <div className="flex justify-between items-center pt-4">
             <div>

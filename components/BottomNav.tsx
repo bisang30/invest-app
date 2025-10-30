@@ -24,6 +24,8 @@ const iconMap: Record<Screen, React.ComponentType<{ className: string }>> = {
   [Screen.MonthlyHistory]: Squares2X2Icon,
   [Screen.Index]: Squares2X2Icon,
   [Screen.Rebalancing]: Squares2X2Icon,
+  // FIX: Add missing GOAL_INVESTING to iconMap
+  [Screen.GoalInvesting]: Squares2X2Icon,
 };
 
 const activeColorMap: Record<Screen, string> = {
@@ -39,6 +41,8 @@ const activeColorMap: Record<Screen, string> = {
   [Screen.Index]: 'text-slate-600 dark:text-slate-400',
   [Screen.AccountTransactions]: 'text-cyan-600 dark:text-cyan-400',
   [Screen.Rebalancing]: 'text-slate-600 dark:text-slate-400',
+  // FIX: Add missing GOAL_INVESTING to activeColorMap
+  [Screen.GoalInvesting]: 'text-lime-600 dark:text-lime-400',
 };
 
 const activeBgColorMap: Record<Screen, string> = {
@@ -54,6 +58,8 @@ const activeBgColorMap: Record<Screen, string> = {
   [Screen.Index]: 'bg-slate-100 dark:bg-slate-700',
   [Screen.AccountTransactions]: 'bg-cyan-100 dark:bg-cyan-900/50',
   [Screen.Rebalancing]: 'bg-slate-100 dark:bg-slate-700',
+  // FIX: Add missing GOAL_INVESTING to activeBgColorMap
+  [Screen.GoalInvesting]: 'bg-lime-100 dark:bg-lime-900/50',
 };
 
 
