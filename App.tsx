@@ -777,12 +777,12 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
           alertThresholds={alertThresholds}
           showSummary={showSummary}
           monthlyValues={monthlyValues}
-          transactions={transactions}
+          transactions={mainPortfolioTransactions}
           accounts={accounts}
         />;
       case Screen.StockStatus:
         return <StockStatusScreen 
-          trades={trades} 
+          trades={mainPortfolioTrades} 
           stocks={stocks} 
           stockPrices={stockPrices} 
           initialPortfolio={initialPortfolio} 
@@ -791,8 +791,8 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         return <AccountStatusScreen 
           accounts={accounts} 
           brokers={brokers} 
-          trades={trades} 
-          transactions={transactions} 
+          trades={mainPortfolioTrades} 
+          transactions={mainPortfolioTransactions} 
           setTransactions={setTransactions}
           setCurrentScreen={navigateToScreen}
           bankAccounts={bankAccounts}
@@ -802,7 +802,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         />;
       case Screen.HoldingsStatus:
         return <HoldingsStatusScreen
-          trades={trades} 
+          trades={mainPortfolioTrades} 
           stocks={stocks} 
           stockPrices={stockPrices} 
           initialPortfolio={initialPortfolio} 
@@ -820,10 +820,10 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         />;
       case Screen.ProfitManagement:
         return <ProfitManagementScreen
-          trades={trades}
+          trades={mainPortfolioTrades}
           stocks={stocks}
           accounts={accounts}
-          transactions={transactions}
+          transactions={mainPortfolioTransactions}
           setTransactions={setTransactions}
           setCurrentScreen={navigateToScreen}
           historicalGains={historicalGains}
@@ -833,7 +833,7 @@ const App: React.FC<AppProps> = ({ onForceRemount }) => {
         return <MonthlyHistoryScreen
           monthlyValues={monthlyValues}
           setMonthlyValues={setMonthlyValues}
-          transactions={transactions}
+          transactions={mainPortfolioTransactions}
         />;
       case Screen.GoalInvesting:
         return <GoalInvestingScreen

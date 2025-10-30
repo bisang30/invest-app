@@ -1,9 +1,9 @@
 {
   "short_name": "투자 관리 앱",
-  "name": "Investment Management App V2.2.0",
+  "name": "Investment Management App V2.2.1",
   "icons": [
     {
-      "src": "/icon.svg?v=2.2.0",
+      "src": "/icon.svg?v=2.2.1",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

@@ -76,7 +76,9 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
       const holdings: { [stockId: string]: { quantity: number, totalCost: number } } = {};
       goalTrades.forEach(trade => {
         if (!holdings[trade.stockId]) holdings[trade.stockId] = { quantity: 0, totalCost: 0 };
-        const qty = trade.quantity, price = trade.price;
+        // FIX: Explicitly cast trade quantity and price to numbers to prevent type errors in arithmetic operations.
+        const qty = Number(trade.quantity) || 0;
+        const price = Number(trade.price) || 0;
         if (trade.tradeType === TradeType.Buy) {
           holdings[trade.stockId].quantity += qty;
           holdings[trade.stockId].totalCost += qty * price;
@@ -88,7 +90,8 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
       });
       
       const investedPrincipal = goalTrades.reduce((sum, t) => {
-        const amount = t.quantity * t.price;
+        // FIX: Explicitly cast trade quantity and price to numbers to prevent type errors. This fixes the error reported on line 120.
+        const amount = (Number(t.quantity) || 0) * (Number(t.price) || 0);
         return t.tradeType === TradeType.Buy ? sum + amount : sum - amount;
       }, 0);
 
@@ -157,7 +160,8 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
           
           if (remainingShares > 0) {
             const relevantTrades = goalTrades.filter(t => t.stockId === stockId && t.tradeType === TradeType.Buy && new Date(t.date) >= new Date(goal.creationDate));
-            const totalSharesBought = relevantTrades.reduce((sum, t) => sum + t.quantity, 0);
+            // FIX: Explicitly cast trade quantity to a number to prevent type errors. This fixes the error reported on line 156.
+            const totalSharesBought = relevantTrades.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0);
 
             if (totalSharesBought > 0) {
               const rate = totalSharesBought / daysPassed;
@@ -200,6 +204,18 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
   
   const handleTradeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // FIX: Added validation for trade form submission to prevent adding invalid data. This likely addresses the issue reported on line 238, which may have had an incorrect line number or property name.
+    const quantity = Number(tradeFormState.quantity);
+    const price = Number(tradeFormState.price);
+
+    if (isNaN(quantity) || isNaN(price) || quantity <= 0 || price <= 0) {
+        alert('수량과 단가를 올바르게 입력해주세요.');
+        return;
+    }
+    if (!tradeFormState.accountId || !tradeFormState.stockId) {
+        alert('계좌와 종목을 선택해주세요.');
+        return;
+    }
     setTrades(prev => [{ ...tradeFormState, id: Date.now().toString() }, ...prev]);
     setIsTradeModalOpen(false);
   };

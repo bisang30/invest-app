@@ -1,12 +1,11 @@
-
 import React, { useMemo, useState } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Input from '../components/ui/Input';
-import { AccountTransaction, TransactionType, MonthlyAccountValue } from '../types';
-import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { ArrowTrendingUpIcon, CalendarDaysIcon } from '../components/Icons';
+import { AccountTransaction, MonthlyAccountValue } from '../types';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { CalendarDaysIcon, ChartBarSquareIcon } from '../components/Icons';
 
 interface MonthlyHistoryScreenProps {
   monthlyValues: MonthlyAccountValue[];
@@ -45,30 +44,12 @@ const MonthlyHistoryScreen: React.FC<MonthlyHistoryScreenProps> = ({
     
     return sortedValues.map(mv => {
       const date = new Date(mv.date);
-      const cumulativeDeposits = (transactions || [])
-        .filter(t => new Date(t.date) <= date)
-        .reduce((acc, t) => {
-            if (!t || !t.counterpartyAccountId) {
-                const amount = Number(t.amount) || 0;
-                if (t.transactionType === TransactionType.Deposit || t.transactionType === TransactionType.Dividend) {
-                  return acc + amount;
-                } else if (t.transactionType === TransactionType.Withdrawal) {
-                  return acc - amount;
-                }
-            }
-            return acc;
-        }, 0);
-
-      const profitLoss = cumulativeDeposits > 0 ? (Number(mv.totalValue) || 0) - cumulativeDeposits : 0;
-      const profitLossRate = cumulativeDeposits > 0 ? (profitLoss / cumulativeDeposits) * 100 : 0;
-      
       return {
         date: date.toLocaleDateString('ko-KR', { year: '2-digit', month: 'short' }),
         totalValue: Number(mv.totalValue) || 0,
-        profitLossRate: profitLossRate,
       };
     });
-  }, [monthlyValues, transactions]);
+  }, [monthlyValues]);
 
   const openAddModal = () => {
     setEditingMonthlyValue(null);
@@ -138,20 +119,23 @@ const MonthlyHistoryScreen: React.FC<MonthlyHistoryScreenProps> = ({
       {trendData.length > 0 && (
         <Card>
             <h2 className="text-xl font-semibold mb-4 text-light-text dark:text-dark-text flex items-center gap-3">
-              <ArrowTrendingUpIcon className="w-7 h-7 text-green-500" />
+              <ChartBarSquareIcon className="w-7 h-7 text-green-500" />
               <span>자산 추이</span>
             </h2>
             <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} />
-                    <XAxis dataKey="date" />
-                    <YAxis yAxisId="left" orientation="left" stroke="#3b82f6" tickFormatter={(value) => new Intl.NumberFormat('ko-KR', { notation: 'compact' }).format(value as number)} />
-                    <YAxis yAxisId="right" orientation="right" stroke="#ef4444" unit="%" />
-                    <Tooltip formatter={(value: number, name: string) => (name === '수익률' ? `${value.toFixed(2)}%` : formatCurrency(value))} />
-                    <Legend />
-                    <Bar yAxisId="left" dataKey="totalValue" name="계좌 총액" fill="#3b82f6" />
-                    <Line yAxisId="right" type="monotone" dataKey="profitLossRate" name="수익률" stroke="#ef4444" />
-                </ComposedChart>
+              <AreaChart data={trendData}>
+                  <defs>
+                      <linearGradient id="colorTotalValue" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} />
+                  <XAxis dataKey="date" />
+                  <YAxis orientation="left" stroke="#3b82f6" tickFormatter={(value) => new Intl.NumberFormat('ko-KR', { notation: 'compact' }).format(value as number)} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Area type="monotone" dataKey="totalValue" name="계좌 총액" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTotalValue)" />
+              </AreaChart>
             </ResponsiveContainer>
         </Card>
       )}
