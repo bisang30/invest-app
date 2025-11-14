@@ -98,7 +98,9 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
       const currentValue = Object.entries(holdings).reduce((sum, [stockId, data]) => {
         const stock = stockMap.get(stockId);
         const price = stock ? stockPrices[stock.ticker] || 0 : 0;
-        return sum + (data.quantity * price);
+        // FIX: Explicitly cast `data.quantity` to a number. Although it should be a number from the `holdings` calculation,
+        // type inference can sometimes fail, leading to arithmetic errors. This ensures the value is treated as a number.
+        return sum + (Number(data.quantity) * price);
       }, 0);
 
       const detailedHoldings = Object.entries(holdings).filter(([, data]) => data.quantity > 0).map(([stockId, data]) => {
@@ -160,8 +162,9 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
           
           if (remainingShares > 0) {
             const relevantTrades = goalTrades.filter(t => t.stockId === stockId && t.tradeType === TradeType.Buy && new Date(t.date) >= new Date(goal.creationDate));
-            // FIX: Explicitly cast trade quantity to a number to prevent type errors. This fixes the error reported on line 156.
-            const totalSharesBought = relevantTrades.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0);
+            // FIX: Explicitly cast `t.quantity` to a number. Data from sources like `localStorage` can sometimes lose its type,
+            // so this ensures the value is treated as a number for the arithmetic operation.
+            const totalSharesBought = relevantTrades.reduce((sum, t) => sum + Number(t.quantity), 0);
 
             if (totalSharesBought > 0) {
               const rate = totalSharesBought / daysPassed;
@@ -204,7 +207,7 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
   
   const handleTradeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // FIX: Added validation for trade form submission to prevent adding invalid data. This likely addresses the issue reported on line 238, which may have had an incorrect line number or property name.
+    // FIX: Added validation for trade form submission to prevent adding invalid data.
     const quantity = Number(tradeFormState.quantity);
     const price = Number(tradeFormState.price);
 
@@ -216,7 +219,7 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
         alert('계좌와 종목을 선택해주세요.');
         return;
     }
-    setTrades(prev => [{ ...tradeFormState, id: Date.now().toString() }, ...prev]);
+    setTrades(prev => [{ ...tradeFormState, quantity, price, id: Date.now().toString() }, ...prev]);
     setIsTradeModalOpen(false);
   };
 
@@ -287,7 +290,9 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
               <>
                 <div className="mt-4">
                   <div className="flex justify-between text-sm mb-1"><span className="font-medium">달성률</span><span className="font-semibold">{goal.progress.toFixed(1)}%</span></div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4"><div className="bg-lime-500 h-4 rounded-full" style={{ width: `${Math.min(goal.progress, 100)}%` }}></div></div>
+                  {/* FIX: Cast `goal.progress` to a number inside `Math.min` to resolve type errors.
+                  This ensures that even if the type is inferred as `unknown`, it is handled correctly as a number. */}
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4"><div className="bg-lime-500 h-4 rounded-full" style={{ width: `${Math.min(Number(goal.progress), 100)}%` }}></div></div>
                   <div className="flex justify-between text-xs mt-1 text-light-secondary dark:text-dark-secondary"><span>{formatCurrency(goal.currentValue)}</span><span>{formatCurrency(goal.targetAmount || 0)}</span></div>
                 </div>
                  <div className="px-4 pb-4"><div className="flex justify-end gap-2 mt-2 pt-4 border-t border-gray-200/50 dark:border-slate-700/50"><Button onClick={() => openTradeModal(goal.id, stocks[0]?.id)} variant="secondary" className="text-sm px-3 py-2">간편 기록</Button></div></div>

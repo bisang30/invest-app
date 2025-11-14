@@ -976,7 +976,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       const dividendsData = safeSheetToJSON(workbook, '배당금기록');
       dividendsData.forEach(row => {
           const date = row['일자'] instanceof Date ? row['일자'].toISOString().split('T')[0] : String(row['일자']);
-          const accountName = row['계좌명']?.trim();
+          const accountName = row['계좌']?.trim();
           const ticker = row['티커']?.trim().toUpperCase();
           const amount = parseFloat(row['금액']);
 

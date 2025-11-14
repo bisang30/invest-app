@@ -1,5 +1,3 @@
-
-
 import React, { useState, useMemo, useEffect } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -8,7 +6,7 @@ import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import { Trade, Stock, Account, AccountTransaction, TradeType, TransactionType, Screen, HistoricalGain } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { CurrencyWonIcon, BanknotesIcon, Cog8ToothIcon, ChartBarIcon, CircleStackIcon, CalendarDaysIcon } from '../components/Icons';
+import { CurrencyWonIcon, BanknotesIcon, Cog8ToothIcon, ChartBarIcon, CircleStackIcon, CalendarDaysIcon, ChevronDownIcon, ChevronUpIcon } from '../components/Icons';
 
 const formatCurrency = (value: number) => new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(value);
 const formatNumber = (value: number | string): string => {
@@ -320,9 +318,10 @@ interface DividendsViewProps {
   setTransactions: React.Dispatch<React.SetStateAction<AccountTransaction[]>>;
   stocks: Stock[];
   accounts: Account[];
+  trades: Trade[];
 }
 
-const DividendsView: React.FC<DividendsViewProps> = ({ transactions, setTransactions, stocks, accounts }) => {
+const DividendsView: React.FC<DividendsViewProps> = ({ transactions, setTransactions, stocks, accounts, trades }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTx, setEditingTx] = useState<AccountTransaction | null>(null);
     const [txToDelete, setTxToDelete] = useState<AccountTransaction | null>(null);
@@ -335,8 +334,48 @@ const DividendsView: React.FC<DividendsViewProps> = ({ transactions, setTransact
         transactionType: TransactionType.Dividend,
     });
     const [filters, setFilters] = useState({ year: new Date().getFullYear().toString(), month: 'all', accountId: 'all', stockId: 'all' });
+    const [groupBy, setGroupBy] = useState<'stock' | 'account'>('stock');
+    const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+
     const stockMap = useMemo(() => new Map((stocks || []).map(s => [s.id, s.name])), [stocks]);
     const accountMap = useMemo(() => new Map((accounts || []).map(a => [a.id, a.name])), [accounts]);
+
+    const stockTotalCosts = useMemo(() => {
+        const holdingsMap: { [stockId: string]: { quantity: number; totalCost: number } } = {};
+
+        [...(trades || [])]
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .forEach(trade => {
+            if (!trade || !trade.stockId) return;
+            if (!holdingsMap[trade.stockId]) {
+                holdingsMap[trade.stockId] = { quantity: 0, totalCost: 0 };
+            }
+            const quantity = Number(trade.quantity) || 0;
+            const price = Number(trade.price) || 0;
+
+            if (trade.tradeType === TradeType.Buy) {
+                holdingsMap[trade.stockId].quantity += quantity;
+                holdingsMap[trade.stockId].totalCost += quantity * price;
+            } else {
+                const avgCost = holdingsMap[trade.stockId].quantity > 0 ? holdingsMap[trade.stockId].totalCost / holdingsMap[trade.stockId].quantity : 0;
+                holdingsMap[trade.stockId].quantity -= quantity;
+                holdingsMap[trade.stockId].totalCost -= quantity * avgCost;
+                if (holdingsMap[trade.stockId].quantity < 1e-9) {
+                    holdingsMap[trade.stockId].quantity = 0;
+                    holdingsMap[trade.stockId].totalCost = 0;
+                }
+            }
+        });
+
+        const costs: { [stockId: string]: number } = {};
+        for (const stockId in holdingsMap) {
+            if (holdingsMap[stockId].totalCost > 0) {
+                costs[stockId] = holdingsMap[stockId].totalCost;
+            }
+        }
+        return costs;
+    }, [trades]);
+
     const dividendTransactions = useMemo(() => (transactions || []).filter(t => t.transactionType === TransactionType.Dividend).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()), [transactions]);
     const filterOptions = useMemo(() => {
       const currentYear = new Date().getFullYear(), startYear = 2024, years = [];
@@ -358,6 +397,28 @@ const DividendsView: React.FC<DividendsViewProps> = ({ transactions, setTransact
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => { const { name, value } = e.target; if (name === 'amount') { const n = parseFloat(value.replace(/,/g, '')); setFormState(p => ({...p, [name]: isNaN(n) ? 0 : n})); } else { setFormState(p => ({...p, [name]: value})); } };
     const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (!formState.accountId || !formState.stockId || !formState.amount || formState.amount <= 0) { alert('모든 필드를 올바르게 입력해주세요.'); return; } if (editingTx) { setTransactions(p => (p || []).map(t => t.id === editingTx.id ? {...t, ...formState} as AccountTransaction : t)); } else { setTransactions(p => [{...formState, id: Date.now().toString()} as AccountTransaction, ...(p || [])]); } setIsModalOpen(false); };
     
+    const groupedData = useMemo(() => {
+        const dataMap: { [key: string]: { name: string, total: number, transactions: AccountTransaction[] } } = {};
+        filteredDividendTransactions.forEach(tx => {
+            const key = groupBy === 'stock' ? tx.stockId : tx.accountId;
+            if (!key) return;
+
+            if (!dataMap[key]) {
+                const name = groupBy === 'stock' 
+                    ? (tx.stockId ? stockMap.get(tx.stockId) : '알 수 없음') 
+                    : accountMap.get(tx.accountId);
+                dataMap[key] = { name: name || '알 수 없음', total: 0, transactions: [] };
+            }
+            dataMap[key].total += Number(tx.amount) || 0;
+            dataMap[key].transactions.push(tx);
+        });
+        
+        return Object.entries(dataMap).map(([key, value]) => ({
+            ...value,
+            id: key,
+        })).sort((a, b) => b.total - a.total);
+    }, [filteredDividendTransactions, groupBy, stockMap, accountMap]);
+
     return (
         <Card>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
@@ -388,15 +449,74 @@ const DividendsView: React.FC<DividendsViewProps> = ({ transactions, setTransact
                   <Select label="종목" name="stockId" value={filters.stockId} onChange={handleFilterChange}><option value="all">전체</option>{filterOptions.stocks.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>
             </div></details>
             <div className="mt-6 mb-8 p-4 bg-light-bg dark:bg-dark-bg/50 rounded-lg"><h3 className="text-lg font-semibold mb-4 text-center text-light-text dark:text-dark-text flex items-center justify-center gap-2"><ChartBarIcon className="w-6 h-6 text-green-500" /><span>{monthlyDividendData.year}년 월별 배당금 현황</span></h3><ResponsiveContainer width="100%" height={300}><BarChart data={monthlyDividendData.chartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis tickFormatter={(v) => new Intl.NumberFormat('ko-KR', { notation: 'compact' }).format(v as number)} /><Tooltip formatter={(v: number) => formatCurrency(v)} /><Legend /><Bar dataKey="배당금" fill="#22c55e" /></BarChart></ResponsiveContainer></div>
-            <div className="overflow-x-auto hidden md:block"><table className="w-full text-left whitespace-nowrap"><thead className="border-b-2 border-gray-200 dark:border-gray-700 bg-light-bg dark:bg-dark-bg"><tr>
-              <th scope="col" className="p-3 text-left text-xs font-medium text-light-secondary dark:text-dark-secondary uppercase tracking-wider">일자</th><th scope="col" className="p-3 text-left text-xs font-medium text-light-secondary dark:text-dark-secondary uppercase tracking-wider">종목</th><th scope="col" className="p-3 text-right text-xs font-medium text-light-secondary dark:text-dark-secondary uppercase tracking-wider">금액</th><th scope="col" className="p-3 text-left text-xs font-medium text-light-secondary dark:text-dark-secondary uppercase tracking-wider">입금계좌</th><th scope="col" className="p-3 text-center text-xs font-medium text-light-secondary dark:text-dark-secondary uppercase tracking-wider">관리</th>
-            </tr></thead><tbody className="divide-y divide-gray-200 dark:divide-gray-700">{filteredDividendTransactions.length === 0 ? (<tr><td colSpan={5} className="text-center p-6 text-light-secondary dark:text-dark-secondary">기록이 없습니다.</td></tr>) : (filteredDividendTransactions.map(tx => (<tr key={tx.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
-              <td className="p-3">{tx.date}</td><td className="p-3 font-semibold">{tx.stockId ? stockMap.get(tx.stockId) : 'N/A'}</td><td className="p-3 text-right font-semibold text-profit">{formatCurrency(tx.amount)}</td><td className="p-3">{accountMap.get(tx.accountId) || 'N/A'}</td><td className="p-3 text-center space-x-2"><Button onClick={() => handleEditClick(tx)} variant="secondary" className="px-2 py-1 text-xs">수정</Button><Button onClick={() => handleDeleteClick(tx)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button></td>
-            </tr>)))}</tbody></table></div>
-            <div className="space-y-3 md:hidden">{filteredDividendTransactions.length === 0 ? (<p className="text-center p-6 text-light-secondary dark:text-dark-secondary">기록이 없습니다.</p>) : (filteredDividendTransactions.map(tx => (<div key={tx.id} className="bg-light-bg dark:bg-dark-bg/50 rounded-lg p-4">
-              <div className="flex justify-between items-start"><div><p className="font-bold text-light-text dark:text-dark-text">{tx.stockId ? stockMap.get(tx.stockId) : 'N/A'}</p><p className="text-sm text-light-secondary dark:text-dark-secondary">{tx.date}</p></div><div className="text-right flex-shrink-0"><p className="font-bold text-lg text-profit">{formatCurrency(tx.amount)}</p></div></div>
-              <div className="mt-3 pt-3 border-t border-gray-200/50 dark:border-slate-700/50 flex justify-between items-center text-sm"><p className="text-light-secondary dark:text-dark-secondary">입금계좌: <span className="font-medium text-light-text dark:text-dark-text">{accountMap.get(tx.accountId) || 'N/A'}</span></p><div className="space-x-2"><Button onClick={() => handleEditClick(tx)} variant="secondary" className="px-2 py-1 text-xs">수정</Button><Button onClick={() => handleDeleteClick(tx)} className="px-2 py-1 text-xs bg-loss text-white hover:bg-red-700 focus:ring-red-500">삭제</Button></div></div>
-            </div>)))}</div>
+            
+            <div className="flex justify-center my-4">
+                <div className="inline-flex rounded-md shadow-sm" role="group">
+                    <button type="button" onClick={() => setGroupBy('stock')} className={`px-4 py-2 text-sm font-medium border rounded-l-lg transition-colors ${groupBy === 'stock' ? 'bg-light-primary text-white border-light-primary' : 'bg-white dark:bg-dark-card text-light-text dark:text-dark-text border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>종목별</button>
+                    <button type="button" onClick={() => setGroupBy('account')} className={`px-4 py-2 text-sm font-medium border-t border-b border-r rounded-r-lg transition-colors ${groupBy === 'account' ? 'bg-light-primary text-white border-light-primary' : 'bg-white dark:bg-dark-card text-light-text dark:text-dark-text border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>계좌별</button>
+                </div>
+            </div>
+
+            <div className="space-y-3">
+                {groupedData.length === 0 ? (<p className="text-center p-6 text-light-secondary dark:text-dark-secondary">해당 조건의 배당금 기록이 없습니다.</p>) : (
+                    groupedData.map(group => {
+                        const isExpanded = expandedGroup === group.name;
+                        let dividendYield: number | null = null;
+                        if (groupBy === 'stock' && group.id && stockTotalCosts[group.id]) {
+                            const totalCost = stockTotalCosts[group.id];
+                            if (totalCost > 0) {
+                                dividendYield = (group.total / totalCost) * 100;
+                            }
+                        }
+                        return (
+                            <div key={group.name} className="bg-light-bg dark:bg-dark-bg/50 rounded-lg shadow-sm">
+                                <div className="p-4 cursor-pointer flex justify-between items-center" onClick={() => setExpandedGroup(isExpanded ? null : group.name)}>
+                                    <div>
+                                        <p className="font-bold text-light-text dark:text-dark-text">{group.name}</p>
+                                        <p className="text-sm text-light-secondary dark:text-dark-secondary">{group.transactions.length}건</p>
+                                    </div>
+                                    <div className="text-right flex items-center gap-3">
+                                        <div>
+                                          <p className="font-bold text-lg text-profit">{formatCurrency(group.total)}</p>
+                                          {dividendYield !== null && (
+                                              <p className="text-xs font-semibold text-green-700 dark:text-green-300">
+                                                  투자금 대비 {dividendYield.toFixed(2)}%
+                                              </p>
+                                          )}
+                                        </div>
+                                        {isExpanded ? <ChevronUpIcon className="w-5 h-5"/> : <ChevronDownIcon className="w-5 h-5"/>}
+                                    </div>
+                                </div>
+                                {isExpanded && (
+                                    <div className="px-4 pb-4 border-t border-gray-200/50 dark:border-slate-700/50 space-y-2">
+                                        {group.transactions.map(tx => (
+                                          <div key={tx.id} className="bg-white dark:bg-dark-card/50 p-3 rounded-md flex justify-between items-center">
+                                              <div>
+                                                  <p className="font-semibold">{tx.date}</p>
+                                                  <p className="text-sm text-light-secondary dark:text-dark-secondary">
+                                                      {groupBy === 'stock'
+                                                          ? `계좌: ${accountMap.get(tx.accountId) || 'N/A'}`
+                                                          : `종목: ${tx.stockId ? stockMap.get(tx.stockId) : 'N/A'}`
+                                                      }
+                                                  </p>
+                                              </div>
+                                              <div className="text-right">
+                                                  <p className="font-bold text-profit">{formatCurrency(tx.amount)}</p>
+                                                  <div className="mt-1 space-x-2">
+                                                      <Button onClick={() => handleEditClick(tx)} variant="secondary" className="px-2 py-1 text-xs">수정</Button>
+                                                      <Button onClick={() => handleDeleteClick(tx)} className="px-2 py-1 text-xs bg-loss text-white">삭제</Button>
+                                                  </div>
+                                              </div>
+                                          </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })
+                )}
+            </div>
+
             <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingTx ? "배당금 수정" : "배당금 기록"}><form onSubmit={handleSubmit} className="space-y-4">
               <Input label="일자" id="div-date" name="date" type="date" value={formState.date} onChange={handleInputChange} required /><Select label="종목" id="div-stockId" name="stockId" value={formState.stockId} onChange={handleInputChange} required>{(stocks || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select><Input label="금액" id="div-amount" name="amount" type="text" inputMode="numeric" value={formatNumber(formState.amount || 0)} onChange={handleInputChange} required /><Select label="입금계좌" id="div-accountId" name="accountId" value={formState.accountId} onChange={handleInputChange} required>{(accounts || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</Select><div className="flex justify-end pt-4"><Button type="submit">저장</Button></div>
             </form></Modal>
@@ -482,7 +602,7 @@ const ProfitManagementScreen: React.FC<ProfitManagementScreenProps> = ({ trades,
 
       <div>
         {activeTab === 'realized' && <RealizedGainsView trades={trades} stocks={stocks} accounts={accounts} historicalGains={historicalGains} setHistoricalGains={setHistoricalGains} setCurrentScreen={setCurrentScreen} />}
-        {activeTab === 'dividends' && <DividendsView transactions={transactions} setTransactions={setTransactions} stocks={stocks} accounts={accounts} />}
+        {activeTab === 'dividends' && <DividendsView trades={trades} transactions={transactions} setTransactions={setTransactions} stocks={stocks} accounts={accounts} />}
       </div>
     </div>
   );
