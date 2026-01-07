@@ -9,39 +9,29 @@ import { Broker, Account, BankAccount, Stock, InitialPortfolio, Trade, TradeType
  */
 export const exportToExcel = (sheets: { name: string, data: any[] }[], fileName: string): void => {
   try {
-    // UMD modules imported via CDN and import maps can be wrapped in unpredictable ways.
-    // This function performs a deep search on the imported module object to find the
-    // actual, usable library that contains the necessary functions.
     const findValidXlsxLibrary = (mod: any): any | null => {
-      // This is the "signature" of the valid XLSX library object.
       const isValid = (lib: any) =>
         lib &&
         typeof lib.utils?.book_new === 'function' &&
         typeof lib.writeFile === 'function';
 
-      // If the module itself is valid, return it immediately.
       if (isValid(mod)) return mod;
       
-      // Use a queue for a breadth-first search to avoid deep recursion issues.
       const queue = [mod];
-      // Use a Set to track visited objects and prevent infinite loops with circular references.
       const visited = new Set();
 
       while (queue.length > 0) {
         const current = queue.shift();
 
-        // Skip primitives, nulls, or already visited objects.
         if (!current || typeof current !== 'object' || visited.has(current)) {
           continue;
         }
         visited.add(current);
         
-        // If the current object in the search is the valid library, we've found it.
         if (isValid(current)) {
           return current;
         }
 
-        // Add all of the object's properties to the queue to search them next.
         for (const key in current) {
           if (Object.prototype.hasOwnProperty.call(current, key)) {
             queue.push(current[key]);
@@ -49,7 +39,6 @@ export const exportToExcel = (sheets: { name: string, data: any[] }[], fileName:
         }
       }
       
-      // As a final fallback, check if the library attached itself to the global window object.
       if (isValid((window as any).XLSX)) {
         return (window as any).XLSX;
       }
@@ -109,6 +98,7 @@ export const exportAllData = (
     sheets.push({ name: '투자 목표', data: (investmentGoals || []).map(g => ({ 
       '목표명': g.name, 
       '생성일': g.creationDate,
+      '목표달성일': g.targetDate || '',
       '목표유형': g.goalType === 'shares' ? '수량' : '금액',
       '목표금액': g.goalType === 'amount' ? g.targetAmount : '' 
     })) });
@@ -204,9 +194,6 @@ export const exportAllData = (
         }))
     });
 
-    // FIX: Explicitly type `alertSettingsData` to allow for both number and string types in its properties.
-    // This resolves a TypeScript error where the array type was inferred as `number` from the first element,
-    // causing a conflict when later pushing elements with `string` values for the same properties.
     const alertSettingsData: {
       '구분': string;
       'ID'?: string;
@@ -229,8 +216,6 @@ export const exportAllData = (
     }
     sheets.push({ name: '리밸런싱알림설정', data: alertSettingsData });
 
-    // FIX: Convert all '설정값' values to strings to ensure consistent typing within the array,
-    // which resolves a TypeScript error likely caused by the xlsx library's type inference.
     sheets.push({ name: '앱설정', data: [
         { '설정명': '백그라운드 조회 주기 (분)', '설정값': String(backgroundFetchInterval) },
         { '설정명': '홈 화면 요약 정보 표시', '설정값': showSummary ? '예' : '아니오' }

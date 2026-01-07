@@ -5,7 +5,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
-import { FlagIcon, ChevronDownIcon, ChevronUpIcon, TrophyIcon, ChartBarSquareIcon, SparklesIcon } from '../components/Icons';
+import { FlagIcon, ChevronDownIcon, ChevronUpIcon, TrophyIcon, ChartBarSquareIcon, SparklesIcon, InformationCircleIcon } from '../components/Icons';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface GoalInvestingScreenProps {
@@ -35,12 +35,20 @@ const SHARE_GOAL_COLORS = [
   { bg: 'bg-purple-50', darkBg: 'dark:bg-purple-900/40', progress: 'bg-purple-500' },
 ];
 
-const getWeek = (d: Date): [number, number] => {
-  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return [d.getUTCFullYear(), weekNo];
+/**
+ * 시작일을 기준으로 상대적 주차를 계산 (시작일이 포함된 7일간이 1주차)
+ */
+const getRelativeWeek = (startDateStr: string, tradeDateStr: string): number => {
+  const start = new Date(startDateStr);
+  start.setHours(0,0,0,0);
+  const trade = new Date(tradeDateStr);
+  trade.setHours(0,0,0,0);
+  
+  const diffTime = trade.getTime() - start.getTime();
+  if (diffTime < 0) return 1; // 시작일 이전 거래는 1주차로 처리하거나 필터링
+  
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  return Math.floor(diffDays / 7) + 1;
 };
 
 const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
@@ -76,7 +84,6 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
       const holdings: { [stockId: string]: { quantity: number, totalCost: number } } = {};
       goalTrades.forEach(trade => {
         if (!holdings[trade.stockId]) holdings[trade.stockId] = { quantity: 0, totalCost: 0 };
-        // FIX: Explicitly cast trade quantity and price to numbers to prevent type errors in arithmetic operations.
         const qty = Number(trade.quantity) || 0;
         const price = Number(trade.price) || 0;
         if (trade.tradeType === TradeType.Buy) {
@@ -89,8 +96,7 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
         }
       });
       
-      const investedPrincipal = goalTrades.reduce((sum, t) => {
-        // FIX: Explicitly cast trade quantity and price to numbers to prevent type errors. This fixes the error reported on line 120.
+      const investedPrincipal = goalTrades.reduce((sum: number, t) => {
         const amount = (Number(t.quantity) || 0) * (Number(t.price) || 0);
         return t.tradeType === TradeType.Buy ? sum + amount : sum - amount;
       }, 0);
@@ -98,8 +104,6 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
       const currentValue = Object.entries(holdings).reduce((sum, [stockId, data]) => {
         const stock = stockMap.get(stockId);
         const price = stock ? stockPrices[stock.ticker] || 0 : 0;
-        // FIX: Explicitly cast `data.quantity` to a number. Although it should be a number from the `holdings` calculation,
-        // type inference can sometimes fail, leading to arithmetic errors. This ensures the value is treated as a number.
         return sum + (Number(data.quantity) * price);
       }, 0);
 
@@ -113,78 +117,96 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
         return { id: stockId, name: stock?.name || '', quantity: data.quantity, avgPrice, currentValue: stockCurrentValue, profitLoss, pnlRate };
       }).sort((a,b) => b.currentValue - a.currentValue);
       
-      const daysPassed = goal.creationDate ? Math.max(1, Math.floor((new Date().getTime() - new Date(goal.creationDate).getTime()) / (1000 * 60 * 60 * 24))) : null;
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const startDay = goal.creationDate ? new Date(goal.creationDate) : today;
+      const daysPassed = Math.max(1, Math.floor((today.getTime() - startDay.getTime()) / (1000 * 60 * 60 * 24)));
       
       let progress = 0;
       if ((goal.goalType || 'amount') === 'amount' && goal.targetAmount && goal.targetAmount > 0) {
         progress = (currentValue / goal.targetAmount) * 100;
       } else if (goal.goalType === 'shares' && goal.targetShares) {
-        const targetValue = Object.entries(goal.targetShares).reduce((sum, [stockId, shares]) => {
+        const targetValue = Object.entries(goal.targetShares).reduce((sum: number, [stockId, shares]) => {
             const stock = stockMap.get(stockId);
             const price = stock ? stockPrices[stock.ticker] || 0 : 0;
-            return sum + (shares * price);
+            return sum + (Number(shares) * price);
         }, 0);
         if (targetValue > 0) progress = (currentValue / targetValue) * 100;
       }
 
+      // 주별 매수 현황 데이터 (상대 주차 기준, 매주 순수 매수량)
       const weeklyDataPerStock: { [stockId: string]: { name: string; '매수량': number }[] } = {};
       if (goal.goalType === 'shares' && goalTrades.length > 0) {
-        const weeklyNetSharesByStock: { [stockId: string]: { [weekKey: string]: number } } = {};
+        const weeklyNetSharesByStock: { [stockId: string]: { [week: number]: number } } = {};
+        
         goalTrades.forEach(trade => {
-            const [year, week] = getWeek(new Date(trade.date));
-            const weekKey = `${year}-${String(week).padStart(2, '0')}주차`;
+            const week = getRelativeWeek(goal.creationDate, trade.date);
+            if (!weeklyNetSharesByStock[trade.stockId]) weeklyNetSharesByStock[trade.stockId] = {};
+            if (!weeklyNetSharesByStock[trade.stockId][week]) weeklyNetSharesByStock[trade.stockId][week] = 0;
             
-            if (!weeklyNetSharesByStock[trade.stockId]) {
-                weeklyNetSharesByStock[trade.stockId] = {};
-            }
-            if (!weeklyNetSharesByStock[trade.stockId][weekKey]) {
-                weeklyNetSharesByStock[trade.stockId][weekKey] = 0;
-            }
-            
-            const netChange = trade.tradeType === TradeType.Buy ? trade.quantity : -trade.quantity;
-            weeklyNetSharesByStock[trade.stockId][weekKey] += netChange;
+            const netChange = trade.tradeType === TradeType.Buy ? Number(trade.quantity) : -Number(trade.quantity);
+            weeklyNetSharesByStock[trade.stockId][week] += netChange;
         });
 
         for (const stockId in weeklyNetSharesByStock) {
-            weeklyDataPerStock[stockId] = Object.entries(weeklyNetSharesByStock[stockId])
-                .map(([weekKey, qty]) => ({ name: weekKey.slice(5), '매수량': qty }))
-                .sort((a, b) => a.name.localeCompare(b.name));
-        }
-      }
-
-      let predictedCompletionDate: string | null = null;
-      if (goal.goalType === 'shares' && goal.targetShares && daysPassed && daysPassed >= 7) {
-        let maxDaysToComplete = 0;
-        
-        for (const [stockId, targetQty] of Object.entries(goal.targetShares)) {
-          const currentQty = holdings[stockId]?.quantity || 0;
-          const remainingShares = targetQty - currentQty;
-          
-          if (remainingShares > 0) {
-            const relevantTrades = goalTrades.filter(t => t.stockId === stockId && t.tradeType === TradeType.Buy && new Date(t.date) >= new Date(goal.creationDate));
-            // FIX: Explicitly cast `t.quantity` to a number. Data from sources like `localStorage` can sometimes lose its type,
-            // so this ensures the value is treated as a number for the arithmetic operation.
-            const totalSharesBought = relevantTrades.reduce((sum, t) => sum + Number(t.quantity), 0);
-
-            if (totalSharesBought > 0) {
-              const rate = totalSharesBought / daysPassed;
-              const daysToComplete = remainingShares / rate;
-              maxDaysToComplete = Math.max(maxDaysToComplete, daysToComplete);
-            } else {
-              maxDaysToComplete = Infinity;
-              break;
+            const sortedWeeks = Object.keys(weeklyNetSharesByStock[stockId]).map(Number).sort((a, b) => a - b);
+            const maxWeek = sortedWeeks.length > 0 ? sortedWeeks[sortedWeeks.length - 1] : 1;
+            
+            const chartData = [];
+            for (let w = 1; w <= maxWeek; w++) {
+                chartData.push({
+                    name: `${w}주차`,
+                    '매수량': weeklyNetSharesByStock[stockId][w] || 0
+                });
             }
-          }
-        }
-
-        if (maxDaysToComplete > 0 && maxDaysToComplete !== Infinity) {
-          const completionDate = new Date();
-          completionDate.setDate(completionDate.getDate() + Math.ceil(maxDaysToComplete));
-          predictedCompletionDate = completionDate.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+            weeklyDataPerStock[stockId] = chartData;
         }
       }
 
-      return { ...goal, currentValue, progress, investedPrincipal, holdings: detailedHoldings, daysPassed, weeklyDataPerStock, predictedCompletionDate };
+      // 달성 가능성 및 필요 속도 분석
+      let feasibilityStatus: 'none' | 'achievable' | 'warning' | 'expired' = 'none';
+      let feasibilityMsg = '';
+      let remainingDays: number | null = null;
+      let paceDetails: { stockName: string; remainingQty: number; requiredWeeklyRate: number; currentWeeklyRate: number }[] = [];
+
+      if (goal.goalType === 'shares' && goal.targetShares && goal.targetDate) {
+        const targetDay = new Date(goal.targetDate);
+        targetDay.setHours(0,0,0,0);
+        remainingDays = Math.ceil((targetDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+        for (const [stockId, targetQty] of Object.entries(goal.targetShares)) {
+            const currentQty = holdings[stockId]?.quantity || 0;
+            const targetQtyNum = Number(targetQty);
+            const remainingQty = targetQtyNum - currentQty;
+            const stock = stockMap.get(stockId);
+
+            if (remainingQty > 0 && stock) {
+                const currentDailyRate = currentQty / daysPassed;
+                const requiredDailyRate = remainingDays > 0 ? remainingQty / remainingDays : Infinity;
+                
+                if (remainingDays <= 0) {
+                    feasibilityStatus = 'expired';
+                } else if (currentDailyRate < requiredDailyRate) {
+                    if (feasibilityStatus !== 'expired') feasibilityStatus = 'warning';
+                    
+                    paceDetails.push({
+                        stockName: stock.name,
+                        remainingQty,
+                        requiredWeeklyRate: requiredDailyRate * 7,
+                        currentWeeklyRate: currentDailyRate * 7
+                    });
+                }
+            }
+        }
+
+        if (feasibilityStatus === 'none' && remainingDays !== null && remainingDays > 0) feasibilityStatus = 'achievable';
+
+        if (feasibilityStatus === 'achievable') feasibilityMsg = '현재 페이스라면 목표일에 달성 가능합니다! 🚀';
+        else if (feasibilityStatus === 'warning') feasibilityMsg = '목표 달성을 위해 매수 속도를 조금 더 높여야 해요! 📈';
+        else if (feasibilityStatus === 'expired') feasibilityMsg = '목표 기한이 지났습니다. 목표를 수정하거나 정비해보세요.';
+      }
+
+      return { ...goal, currentValue, progress, investedPrincipal, holdings: detailedHoldings, daysPassed, weeklyDataPerStock, feasibilityStatus, feasibilityMsg, remainingDays, paceDetails };
     });
   }, [investmentGoals, trades, transactions, stockPrices, stockMap]);
 
@@ -207,7 +229,6 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
   
   const handleTradeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // FIX: Added validation for trade form submission to prevent adding invalid data.
     const quantity = Number(tradeFormState.quantity);
     const price = Number(tradeFormState.price);
 
@@ -230,23 +251,54 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
       ) : (
         goalDetails.map(goal => (
           <Card key={goal.id} className="p-0 overflow-hidden">
-            <div className="p-4">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <FlagIcon className="w-6 h-6 text-lime-500" /><span>{goal.name}</span>
-              </h2>
-              <p className="text-sm text-light-secondary dark:text-dark-secondary mt-1">
-                {goal.goalType === 'shares' ? '종목 수량 목표' : `금액 목표`}
-                {goal.daysPassed !== null && <span className="ml-2">({goal.daysPassed}일 경과)</span>}
-              </p>
-              {goal.predictedCompletionDate && (
-                <p className="text-xs text-purple-600 dark:text-purple-400 mt-1 flex items-center justify-start gap-1">
-                  <SparklesIcon className="w-4 h-4" />
-                  <span>이 속도라면 <b>{goal.predictedCompletionDate}</b> 달성 예상!</span>
-                </p>
+            <div className="p-4 bg-gradient-to-r from-lime-50 to-white dark:from-lime-900/20 dark:to-dark-card border-b border-gray-100 dark:border-slate-800">
+              <div className="flex justify-between items-start">
+                  <div>
+                    <h2 className="text-xl font-bold flex items-center gap-2">
+                        <FlagIcon className="w-6 h-6 text-lime-500" /><span>{goal.name}</span>
+                    </h2>
+                    <p className="text-xs text-light-secondary dark:text-dark-secondary mt-1">
+                        {goal.creationDate} 시작 &middot; {goal.daysPassed}일 경과
+                        {goal.targetDate && <span className="ml-2">&middot; 목표일: {goal.targetDate}</span>}
+                    </p>
+                  </div>
+                  {goal.targetDate && goal.remainingDays !== null && (
+                    <div className={`px-3 py-1 rounded-full text-xs font-bold ${goal.remainingDays >= 0 ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
+                        {goal.remainingDays >= 0 ? `D-${goal.remainingDays}` : `기한 종료`}
+                    </div>
+                  )}
+              </div>
+              
+              {goal.feasibilityStatus !== 'none' && (
+                <div className={`mt-3 p-3 rounded-lg flex flex-col gap-2 text-sm font-medium ${
+                    goal.feasibilityStatus === 'achievable' ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200' : 
+                    goal.feasibilityStatus === 'warning' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200' : 
+                    'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+                }`}>
+                    <div className="flex items-center gap-2">
+                        {goal.feasibilityStatus === 'achievable' ? <SparklesIcon className="w-5 h-5" /> : <InformationCircleIcon className="w-5 h-5" />}
+                        <span>{goal.feasibilityMsg}</span>
+                    </div>
+                    
+                    {goal.feasibilityStatus === 'warning' && goal.paceDetails.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-orange-200 dark:border-orange-700/50 space-y-1.5">
+                            <p className="text-xs opacity-80 mb-1 font-bold">목표 달성을 위한 권장 매수 속도:</p>
+                            {goal.paceDetails.map(detail => (
+                                <div key={detail.stockName} className="flex justify-between items-center text-xs">
+                                    <span className="font-semibold">{detail.stockName}</span>
+                                    <span className="text-right">
+                                        매주 <b className="text-orange-600 dark:text-orange-400">{detail.requiredWeeklyRate.toFixed(2)}주</b> 매수 필요 
+                                        <span className="ml-1 opacity-70">(현재 {detail.currentWeeklyRate.toFixed(2)}주/주)</span>
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
               )}
             </div>
             
-            <div className="px-4 pb-4 space-y-4">
+            <div className="px-4 pb-4 space-y-4 mt-4">
             {goal.goalType === 'shares' && goal.targetShares ? (
               <>
                 <div className="space-y-4">
@@ -254,25 +306,33 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
                     const holding = goal.holdings.find(h => h.id === stockId);
                     const currentQty = holding?.quantity || 0;
                     const stock = stockMap.get(stockId);
-                    const stockProgress = targetQty > 0 ? (currentQty / targetQty) * 100 : 0;
+                    const targetQtyNum = targetQty as number;
+                    const stockProgress = targetQtyNum > 0 ? (currentQty / targetQtyNum) * 100 : 0;
                     const colors = SHARE_GOAL_COLORS[index % SHARE_GOAL_COLORS.length];
                     const weeklyData = goal.weeklyDataPerStock[stockId];
                     if (!stock) return null;
                     return (
                       <div key={stockId} className={`p-4 ${colors.bg} ${colors.darkBg} rounded-xl space-y-3 shadow-inner`}>
-                        <div className="flex justify-between items-center"><p className="font-bold text-lg text-light-text dark:text-dark-text">{stock.name}</p><TrophyIcon className={`w-6 h-6 transition-colors ${stockProgress >= 100 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-600'}`} /></div>
-                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-6 relative"><div className={`h-6 rounded-full text-center text-white text-xs font-bold leading-6 transition-all duration-500 ${stockProgress >= 100 ? 'bg-amber-500' : colors.progress}`} style={{ width: `${Math.min(stockProgress, 100)}%` }}>{stockProgress.toFixed(1)}%</div></div>
-                        <div className="text-right font-mono text-light-secondary dark:text-dark-secondary">{currentQty.toLocaleString(undefined, { maximumFractionDigits: 2 })} / {targetQty.toLocaleString()} 주</div>
+                        <div className="flex justify-between items-center">
+                            <p className="font-bold text-lg text-light-text dark:text-dark-text">{stock.name}</p>
+                            <TrophyIcon className={`w-6 h-6 transition-colors ${stockProgress >= 100 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-600'}`} />
+                        </div>
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-6 relative">
+                            <div className={`h-6 rounded-full text-center text-white text-xs font-bold leading-6 transition-all duration-500 ${stockProgress >= 100 ? 'bg-amber-500' : colors.progress}`} style={{ width: `${Math.min(stockProgress, 100)}%` }}>{stockProgress.toFixed(1)}%</div>
+                        </div>
+                        <div className="text-right font-mono text-light-secondary dark:text-dark-secondary">{currentQty.toLocaleString(undefined, { maximumFractionDigits: 2 })} / {targetQtyNum.toLocaleString()} 주</div>
                         
                         {weeklyData && weeklyData.length > 0 && (
                           <div className="pt-4 mt-4 border-t border-gray-300/50 dark:border-slate-600/50">
-                              <h4 className="font-semibold text-center mb-2 flex items-center justify-center gap-2 text-sm"><ChartBarSquareIcon className="w-5 h-5" />주별 매수 현황</h4>
+                              <h4 className="font-semibold text-center mb-2 flex items-center justify-center gap-2 text-sm">
+                                  <ChartBarSquareIcon className="w-5 h-5" />주차별 매수 현황
+                              </h4>
                               <ResponsiveContainer width="100%" height={150}>
                                   <BarChart data={weeklyData} margin={{ top: 20, right: 0, left: -20, bottom: 5 }}>
                                       <CartesianGrid strokeDasharray="3 3" opacity={0.5} />
                                       <XAxis dataKey="name" fontSize={10} />
                                       <YAxis fontSize={10} />
-                                      <Tooltip formatter={(value) => `${Number(value).toLocaleString()}주`} />
+                                      <Tooltip formatter={(value) => [`${Number(value).toLocaleString()}주`, '매수량']} />
                                       <Bar dataKey="매수량" fill={COLORS[index % COLORS.length]} />
                                   </BarChart>
                               </ResponsiveContainer>
@@ -290,8 +350,6 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
               <>
                 <div className="mt-4">
                   <div className="flex justify-between text-sm mb-1"><span className="font-medium">달성률</span><span className="font-semibold">{goal.progress.toFixed(1)}%</span></div>
-                  {/* FIX: Cast `goal.progress` to a number inside `Math.min` to resolve type errors.
-                  This ensures that even if the type is inferred as `unknown`, it is handled correctly as a number. */}
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4"><div className="bg-lime-500 h-4 rounded-full" style={{ width: `${Math.min(Number(goal.progress), 100)}%` }}></div></div>
                   <div className="flex justify-between text-xs mt-1 text-light-secondary dark:text-dark-secondary"><span>{formatCurrency(goal.currentValue)}</span><span>{formatCurrency(goal.targetAmount || 0)}</span></div>
                 </div>
@@ -336,7 +394,7 @@ const GoalInvestingScreen: React.FC<GoalInvestingScreenProps> = ({
           <Select label="종목" name="stockId" value={tradeFormState.stockId} onChange={e => setTradeFormState(p => ({...p, stockId: e.target.value}))} required>{stocks.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>
           <Input label="수량" name="quantity" type="text" inputMode="numeric" value={formatNumber(tradeFormState.quantity)} onChange={e => setTradeFormState(p => ({...p, quantity: parseFloat(e.target.value.replace(/,/g, '')) || 0}))} required />
           <Input label="단가" name="price" type="text" inputMode="numeric" value={formatNumber(tradeFormState.price)} onChange={e => setTradeFormState(p => ({...p, price: parseFloat(e.target.value.replace(/,/g, '')) || 0}))} required />
-          <Select label="구분" name="tradeType" value={tradeFormState.tradeType} onChange={e => setTradeFormState(p => ({...p, tradeType: e.target.value as TradeType}))} required><option value={TradeType.Buy}>매수</option><option value={TradeType.Sell}>매도</option></Select>
+          <Select label="매매구분" name="tradeType" value={tradeFormState.tradeType} onChange={e => setTradeFormState(p => ({...p, tradeType: e.target.value as TradeType}))} required><option value={TradeType.Buy}>매수</option><option value={TradeType.Sell}>매도</option></Select>
           <Select label="매매방법" name="tradeMethod" value={tradeFormState.tradeMethod} onChange={e => setTradeFormState(p => ({...p, tradeMethod: e.target.value}))} required><option value="직접매매">직접매매</option><option value="자동매매">자동매매</option></Select>
           <div className="flex justify-end pt-4"><Button type="submit">기록</Button></div>
         </form>

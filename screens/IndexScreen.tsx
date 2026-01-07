@@ -62,8 +62,6 @@ const formatNumber = (value: number | string): string => {
   return num.toLocaleString('ko-KR');
 };
 
-
-// FIX: Define IndexScreenProps interface to resolve 'Cannot find name' error.
 interface IndexScreenProps {
   appVersion: string;
   brokers: Broker[];
@@ -179,7 +177,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   // Goal management modal state
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<InvestmentGoal | null>(null);
-  const [goalForm, setGoalForm] = useState<Omit<InvestmentGoal, 'id' | 'targetShares'>>({ name: '', goalType: 'amount', targetAmount: 0, creationDate: new Date().toISOString().split('T')[0] });
+  const [goalForm, setGoalForm] = useState<Omit<InvestmentGoal, 'id' | 'targetShares'>>({ name: '', goalType: 'amount', targetAmount: 0, creationDate: new Date().toISOString().split('T')[0], targetDate: '' });
   const [goalTargetShares, setGoalTargetShares] = useState<{ [key: string]: string }>({});
 
   // Portfolio state
@@ -514,7 +512,13 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   const openGoalModal = (goal: InvestmentGoal | null) => {
     if (goal) {
       setEditingGoal(goal);
-      setGoalForm({ name: goal.name, goalType: goal.goalType || 'amount', targetAmount: goal.targetAmount || 0, creationDate: goal.creationDate || new Date().toISOString().split('T')[0] });
+      setGoalForm({ 
+        name: goal.name, 
+        goalType: goal.goalType || 'amount', 
+        targetAmount: goal.targetAmount || 0, 
+        creationDate: goal.creationDate || new Date().toISOString().split('T')[0],
+        targetDate: goal.targetDate || ''
+      });
       const stringShares: { [key: string]: string } = {};
       if (goal.targetShares) {
         Object.keys(goal.targetShares).forEach(stockId => {
@@ -524,7 +528,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       setGoalTargetShares(stringShares);
     } else {
       setEditingGoal(null);
-      setGoalForm({ name: '', goalType: 'amount', targetAmount: 0, creationDate: new Date().toISOString().split('T')[0] });
+      setGoalForm({ name: '', goalType: 'amount', targetAmount: 0, creationDate: new Date().toISOString().split('T')[0], targetDate: '' });
       setGoalTargetShares({});
     }
     setIsGoalModalOpen(true);
@@ -557,7 +561,12 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       return;
     }
 
-    let goalData: Partial<InvestmentGoal> = { name: goalForm.name, goalType: goalForm.goalType, creationDate: goalForm.creationDate };
+    let goalData: Partial<InvestmentGoal> = { 
+      name: goalForm.name, 
+      goalType: goalForm.goalType, 
+      creationDate: goalForm.creationDate,
+      targetDate: goalForm.targetDate || undefined
+    };
 
     if (goalForm.goalType === 'amount') {
       if (goalForm.targetAmount! <= 0) {
@@ -605,8 +614,6 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       confirmText: '삭제',
       confirmVariant: 'danger',
       onConfirm: () => {
-        // Find trades and transactions associated with the goal and unset their goalId
-        // This is not implemented in setTrades/setTransactions, so I will do it manually.
         const updatedTrades = (trades || []).map(t => t.goalId === goalId ? { ...t, goalId: undefined } : t);
         const updatedTransactions = (transactions || []).map(t => t.goalId === goalId ? { ...t, goalId: undefined } : t);
         localStorage.setItem('trades', JSON.stringify(updatedTrades));
@@ -615,7 +622,6 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
         setInvestmentGoals(prev => (prev || []).filter(g => g.id !== goalId));
         closeConfirmationModal();
 
-        // Force remount to reflect changes in calculations
         setTimeout(() => onForceRemount(), 100);
       }
     });
@@ -697,7 +703,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
   const handleSaveBackgroundInterval = () => {
     const minutes = parseInt(localBackgroundInterval, 10);
     if (isNaN(minutes) || minutes < 1) {
-      alert('백그라운드 조회 주기는 1분 이상이어야 합니다.');
+      alert('백그라운드 조회 주기가 1분 이상이어야 합니다.');
       setLocalBackgroundInterval(String(backgroundFetchInterval));
       return;
     }
@@ -763,7 +769,6 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
     'historicalGains', 'alertThresholds', 'backgroundFetchInterval', 'showSummary', 'investmentGoals'
   ];
   
-  // --- Data Import from Excel ---
   const handleImportClick = () => {
     importFileInputRef.current?.click();
   };
@@ -781,7 +786,6 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
         onConfirm: executeImport,
       });
     }
-    // Clear the input value to allow selecting the same file again
     if (event.target) {
       event.target.value = '';
     }
@@ -805,7 +809,7 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       const safeSheetToJSON = (wb: any, sheetName: string): any[] => {
           const ws = wb.Sheets[sheetName];
           if (!ws) {
-              console.warn(`'${sheetName}' 시트를 찾을 수 없습니다. 건너뜁니다.`);
+              console.warn(`'${sheetName}' 시트를 찾을 수 없습니다. 건너뜜.`);
               return [];
           }
           return xlsxLib.utils.sheet_to_json(ws);
@@ -884,10 +888,19 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
         if (name && !goalNameToIdMap.has(name)) {
             const newId = `goal-${Date.now()}-${Math.random()}`;
             goalNameToIdMap.set(name, newId);
-            const creationDate = row['생성일'] instanceof Date ? row['생성일'].toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+            const creationDate = row['생성일'] instanceof Date ? row['생성일'].toISOString().split('T')[0] : String(row['생성일'] || '');
+            const targetDate = row['목표달성일'] instanceof Date ? row['목표달성일'].toISOString().split('T')[0] : String(row['목표달성일'] || '');
             const goalType = row['목표유형'] === '수량' ? 'shares' : 'amount';
             const targetAmount = goalType === 'amount' ? parseFloat(row['목표금액']) : undefined;
-            newGoals.push({ id: newId, name, creationDate, goalType, targetAmount, targetShares: goalType === 'shares' ? {} : undefined });
+            newGoals.push({ 
+              id: newId, 
+              name, 
+              creationDate: creationDate || new Date().toISOString().split('T')[0], 
+              targetDate: targetDate || undefined,
+              goalType, 
+              targetAmount, 
+              targetShares: goalType === 'shares' ? {} : undefined 
+            });
         }
       });
 
@@ -949,7 +962,6 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       const newTransactions: AccountTransaction[] = [];
       const allAccountsMapForImport = new Map([...accountNameToIdMap.entries(), ...bankAccountIdentifierToIdMap.entries()]);
       
-      // Import regular transactions
       const transactionsData = safeSheetToJSON(workbook, '입출금기록');
       transactionsData.forEach(row => {
           const date = row['일자'] instanceof Date ? row['일자'].toISOString().split('T')[0] : String(row['일자']);
@@ -972,7 +984,6 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
           }
       });
       
-      // Import dividend transactions
       const dividendsData = safeSheetToJSON(workbook, '배당금기록');
       dividendsData.forEach(row => {
           const date = row['일자'] instanceof Date ? row['일자'].toISOString().split('T')[0] : String(row['일자']);
@@ -1695,7 +1706,10 @@ const IndexScreen: React.FC<IndexScreenProps> = ({
       <Modal isOpen={isGoalModalOpen} onClose={closeGoalModal} title={editingGoal ? "투자 목표 수정" : "새 투자 목표 추가"}>
         <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
             <Input label="목표 이름" name="name" value={goalForm.name} onChange={e => setGoalForm(p => ({...p, name: e.target.value}))} required />
-            <Input label="시작일" name="creationDate" type="date" value={goalForm.creationDate} onChange={handleGoalFormChange} required />
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="시작일" name="creationDate" type="date" value={goalForm.creationDate} onChange={handleGoalFormChange} required />
+              <Input label="목표달성일 (선택)" name="targetDate" type="date" value={goalForm.targetDate} onChange={handleGoalFormChange} />
+            </div>
             <Select label="목표 유형" name="goalType" value={goalForm.goalType} onChange={handleGoalFormChange}>
               <option value="amount">금액 목표</option>
               <option value="shares">종목 수량 목표</option>
